@@ -368,14 +368,14 @@ char* str_replace(char* body, size_t* bodylen,... ) {
 
 		insert = strstr(body, placeholder);
 		pos = body + *bodylen;
-		if (shift > 0) {
+		if ((ssize_t)shift > 0) {
 			while (pos-- != insert) {
 				*(pos + shift) = *pos;
 
 			}
 
 		}
-		else if (shift < 0) {
+		else if ((ssize_t)shift < 0) {
 			pos = insert + rlen - 1;
 			char* end = body + *bodylen;
 			while ((pos - shift) != end) {
