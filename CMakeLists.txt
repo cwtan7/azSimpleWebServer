@@ -61,4 +61,4 @@ endif()
 
 add_dependencies(ValidateManifest ${PROJECT_NAME})
 
-azsphere_target_add_image_package(${PROJECT_NAME} RESOURCE_FILES "./html/index.htm" "./html/test.jpg")
+azsphere_target_add_image_package(${PROJECT_NAME} RESOURCE_FILES "index.htm" "test.jpg")
