@@ -71,6 +71,7 @@ typedef struct {
     /// <summary>Number of characters received from client.</summary>
     size_t inLineSize;
     /// <summary>Data received from client.</summary>
+    char* httpMethod;
     char input[MAX_LINE_INPUT];
     /// <summary>Callback which is invoked when have written data to client.</summary>
     EventData clientWriteEvent;
