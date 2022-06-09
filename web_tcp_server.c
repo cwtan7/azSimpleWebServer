@@ -140,7 +140,7 @@ webServer_ServerState *webServer_Start(int epollFd, in_addr_t ipAddr, uint16_t p
         goto fail;
     }
 
-    LogWebDebug("INFO: TCP server: Listening for client connection (fd %d).\n",
+    LogWebDebug("INFO: TCP server: Listening for client connection listen fd(fd %d).\n",
               serverState->listenFd);
 
     return serverState;
@@ -160,9 +160,6 @@ void webServer_ShutDown(webServer_ServerState *serverState)
     CloseFdAndPrintError(serverState->listenFd, "listenFd");
 
     free(serverState->txPayload);
-	
-
-   
 }
 
 void webServer_Restart(webServer_ServerState* serverState){
@@ -192,9 +189,10 @@ static void HandleListenEvent(EventData *eventData)
             break;
         }
 
-        LogWebDebug("INFO: TCP server: Accepted client connection (fd %d).\n", localFd);
+        LogWebDebug("INFO: TCP server: request from client connection (fd %d).\n", localFd);
 
         // If already have a client, then close the newly-accepted socket.
+
         if (serverState->clientFd >= 0) {
             LogWebDebug(
                 "INFO: TCP server: Closing incoming client connection: only one client supported "
@@ -204,6 +202,7 @@ static void HandleListenEvent(EventData *eventData)
 
         // Socket opened successfully, so transfer ownership to EchoServer_ServerState object.
         serverState->clientFd = localFd;
+		LogWebDebug("*****set clientFd %d).\n", serverState->clientFd);
         localFd = -1;
 
         LaunchRead(serverState);
@@ -250,8 +249,6 @@ static void HandleClientReadEvent(EventData *eventData)
 				
 			}else if (b== '\n' && last=='\r')
 			{
-				
-                
 				//Check the hearder recevied include GET and HTTP string as a http reqest 
 				//cw_dbg char pos = strstr(serverState->input, "GET");
 				char *pos = strstr(serverState->input, "GET");
@@ -268,10 +265,8 @@ static void HandleClientReadEvent(EventData *eventData)
 					}
 				}
 
-                LogWebDebug("INFO: TCP server: Received \"%s\"\n", serverState->input);
-				//serverState->inLineSize = 0;
-                //LaunchWrite(serverState);
-                
+				//report each header
+                //LogWebDebug("INFO: TCP server: Received \"%s\"\n", serverState->input);
             }
 
             // If new character is not printable then discard.
@@ -301,7 +296,7 @@ static void HandleClientReadEvent(EventData *eventData)
 
         // If client has shut down restart the webServer.
         else if (bytesReadOneSysCall == 0) {
-            LogWebDebug("INFO: TCP server: Client has closed connection.\n");
+            LogWebDebug("INFO: TCP server: Client has closed connection, reset serverstate.\n");
 			webServer_Restart(serverState);
 			
         //StopServer(serverState, EchoServer_StopReason_ClientClosed);
@@ -324,7 +319,7 @@ static void HandleClientReadEvent(EventData *eventData)
         // Another error occured so abort the program.
         else {
             ReportError("recv");
-		
+			LogWebDebug("TCP receive error, reset serverstate.\n");
 			webServer_Restart(serverState);
 			
 
@@ -938,15 +933,7 @@ Connection:close\015\012\
 	HandleClientWriteEvent(&serverState->clientWriteEvent);
 
 	
-	
-	//free(serverState->txPayload);
-
-	
-
-	//
-	webServer_Restart(serverState);
-	web_afterprocess();
-	
+	web_afterprocess();	
 }
 
 static void HandleClientWriteEvent(EventData *eventData)
@@ -983,6 +970,7 @@ static void HandleClientWriteEvent(EventData *eventData)
         else {
             ReportError("send");
            // StopServer(serverState, EchoServer_StopReason_Error);
+		    LogWebDebug("error in TCP sending, reset serverstate.\n");
 			webServer_Restart(serverState);
 			
             return;
@@ -999,6 +987,7 @@ static void HandleClientWriteEvent(EventData *eventData)
 	
 
 	//Restart for next process 
+	//LogWebDebug("After http write event, reset serverstate.\n");
 	webServer_Restart(serverState);
 	
    // LaunchRead(serverState);
