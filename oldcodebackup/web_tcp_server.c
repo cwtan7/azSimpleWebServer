@@ -272,17 +272,9 @@ static void HandleClientReadEvent(EventData *eventData)
 						}
 					}
 				}
-				char pos = strstr(serverState->input, "Content-Length:");
-				if ( pos != NULL){
-					char* contentLengthStr = malloc(10);
-					uint8_t begin=strlen("Content-Length:")+1;
-					strncpy(contentLengthStr, &serverState->input[begin], strlen(serverState->input) - begin);
-					serverState->contentLength=(int)atoi(contentLengthStr);
-					free(contentLengthStr);
-				}
 
 				// uncomment below line if you wanna see each header in log
-				//LogWebDebug("INFO: TCP server: Received \"%s\"\n", serverState->input);
+				// LogWebDebug("INFO: TCP server: Received \"%s\"\n", serverState->input);
 			}
 
 			// If new character is not printable then discard.
@@ -330,20 +322,12 @@ static void HandleClientReadEvent(EventData *eventData)
 			RegisterEventHandlerToEpoll(serverState->epollFd, serverState->clientFd,
 										&serverState->clientReadEvent, EPOLLIN);
 			serverState->epollInEnabled = true;
-			if(serverState->httpMethod=="POST"){
-				serverState->input[serverState->contentLength]='\0';
-			}
-
 			LogWebDebug("method: %s   URI: %s   payload: %s\n", serverState->httpMethod, serverState->post, serverState->input);
 
 			// Launch send after received hearder
 			if (serverState->isHttp == 1)
 				LaunchWrite(serverState);
-			else{
-				LogWebDebug("Unknown http method, skip...\n");
-				webServer_Restart(serverState);
-			}
-				
+
 			break;
 		}
 
@@ -481,6 +465,163 @@ void web_afterprocess(void)
 		}
 	}
 }
+/// <summary>
+///    process of "GET" required by client
+///
+/// </summary>
+/// <param name="filename">
+///     request filename with path
+/// </param>
+/// <param name="filetype">
+///     file type of request
+/// </param>
+/// <param name="body">
+///    the body of return http
+/// </param>
+/// <param name="bodylen">
+///    the len of body
+/// </param>
+/// <param name="get_name">
+///    the array of GET name
+/// </param>
+/// <param name="get_name">
+///    the array of GET value
+/// </param>
+/// <param name="get_name">
+///    total number of get parameter
+/// </param>
+/// <returns>new body pointer</returns>
+char *web_interact(const char *filename, const char *filetype, char *body, int *bodylen, char **get_name, char **get_value, size_t numofget)
+{
+
+	if (!strcmp(filename, "index"))
+	{
+
+		WifiConfig_ConnectedNetwork *connected = malloc(sizeof(WifiConfig_ConnectedNetwork));
+
+		char *runjs = malloc(1);
+		runjs[0] = '\0';
+		char *currentwifi;
+		bool withwifi = false;
+
+		int result = WifiConfig_GetCurrentNetwork(connected);
+
+		char *ssid = malloc(connected->ssidLength + 1U);
+		strncpy(ssid, connected->ssid, connected->ssidLength);
+		ssid[connected->ssidLength] = '\0';
+
+		if (result < 0)
+		{
+			if (errno == ENOTCONN)
+				currentwifi = "No WIFI Connected";
+			else
+				currentwifi = "WIFI not available";
+		}
+		else
+		{
+
+			asprintf(&currentwifi, "Current WIFI: %s", ssid);
+			withwifi = true;
+		}
+
+		free(connected);
+
+		if (numofget > 0)
+		{
+
+			// cw_dbg int mode = -1;
+
+			for (size_t i = 0; i < numofget; i++)
+			{
+				if (!strcmp(get_name[i], "switchwifi"))
+				{
+					if (!strcmp(get_value[i], "OFF"))
+					{
+						afterprocess = AFTER_FORGET;
+
+						char *run = "wifioffscreen();";
+						size_t runjslen = strlen(runjs);
+						size_t runlen = strlen(run);
+						runjs = realloc(runjs, runjslen + runlen + 1);
+						for (size_t i = 0; i < runlen; i++)
+							runjs[i + runjslen] = run[i];
+						runjs[runjslen + runlen] = '\0';
+
+						body = str_replace(body, bodylen, currentwifi, "", withwifi ? "OFF" : "ON", withwifi ? "REMOVE" : "ON", runjs);
+						return body;
+					}
+
+					break;
+				}
+
+				if (!strcmp(get_name[i], "ssid"))
+				{
+					new_wifi_ssid = (char *)get_value[i];
+					afterprocess = AFTER_CHANGEWIFI;
+				}
+
+				if (!strcmp(get_name[i], "password"))
+				{
+					new_wifi_psk = (char *)get_value[i];
+					afterprocess = AFTER_CHANGEWIFI;
+					char *run = "changewifi();";
+					size_t runjslen = strlen(runjs);
+					size_t runlen = strlen(run);
+					runjs = realloc(runjs, runjslen + runlen + 1);
+					for (size_t i = 0; i < runlen; i++)
+						runjs[i + runjslen] = run[i];
+					runjs[runjslen + runlen] = '\0';
+					body = str_replace(body, bodylen, currentwifi, "", withwifi ? "OFF" : "ON", withwifi ? "REMOVE" : "ON", runjs);
+					return body;
+				}
+			}
+		}
+
+		size_t scannedwifi = (size_t)(WifiConfig_TriggerScanAndGetScannedNetworkCount());
+
+		WifiConfig_ScannedNetwork *scannetworks = malloc(sizeof(WifiConfig_ScannedNetwork) * scannedwifi);
+
+		int numofwifi = WifiConfig_GetScannedNetworks(scannetworks, scannedwifi);
+
+		char *options = malloc(1);
+		options[0] = '\0';
+
+		for (int i = 0; i < numofwifi; i++)
+		{
+
+			if (scannetworks[i].ssidLength <= 0)
+				continue;
+			char *ssid = malloc(scannetworks[i].ssidLength + 1U);
+
+			strncpy(ssid, scannetworks[i].ssid, scannetworks[i].ssidLength);
+			ssid[scannetworks[i].ssidLength] = '\0';
+			if (scannetworks[i].security == WifiConfig_Security_Unknown)
+				continue;
+			int id = scannetworks[i].security == WifiConfig_Security_Wpa2_Psk ? 0 : 1;
+			char *option;
+
+			asprintf(&option, "<option id=\"%d\" value=\"%s\">%-30s %dmhz (%d)</option>\n", id, ssid, ssid, scannetworks[i].frequencyMHz, scannetworks[i].signalRssi);
+
+			size_t optionslen = strlen(options);
+			size_t optionlen = strlen(option);
+			options = realloc(options, optionslen + optionlen + 1U);
+
+			for (size_t i = 0; i <= optionlen; i++)
+			{
+				options[optionslen + i] = option[i];
+			}
+		}
+
+		body = str_replace(body, bodylen, currentwifi, options, withwifi ? "OFF" : "ON", withwifi ? "REMOVE" : "ON", runjs);
+
+		free(options);
+		free(scannetworks);
+
+		return body;
+	}
+
+	return false;
+}
 
 
 static void LaunchWrite(webServer_ServerState *serverState)
@@ -502,13 +643,8 @@ Connection:close\015\012\
 		serverState->txPayloadSize =  strlen(header);
 		serverState->txPayload = (uint8_t *)header;
 		serverState->txBytesSent = 0;
-
-		LogWebDebug("payload: %s\n", serverState->input);
-		// TODO: send the received log file content to iot hub....
-
-		
 		HandleClientWriteEvent(&serverState->clientWriteEvent);
-		
+		// TODO: send the received log file content to iot hub....
 	}
 }
 
@@ -783,6 +919,9 @@ static void LaunchWriteGET(webServer_ServerState *serverState)
 	{
 		code = 200;
 	}
+
+	if (mimetype == MIME_TEXT)
+		body = web_interact(filename, filetype, body, &bodylen, get_name, get_value, numofget);
 
 	// header
 	char *status;
