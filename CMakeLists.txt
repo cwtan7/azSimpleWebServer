@@ -10,8 +10,12 @@ azsphere_configure_api(TARGET_API_SET "12")
 
 # Create executable
 
-add_executable(${PROJECT_NAME} main.c epoll_timerfd_utilities.c web_tcp_server.c)
+add_executable(${PROJECT_NAME} "")
+add_subdirectory(common)
+add_subdirectory(DPS)
+
 target_include_directories(${PROJECT_NAME} PUBLIC
+                            ${CMAKE_SOURCE_DIR}/common
                            ${AZURE_SPHERE_API_SET_DIR}/usr/include/azureiot
                            ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_prov_client
                            ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_c_shared_utility)
@@ -61,4 +65,4 @@ endif()
 
 add_dependencies(ValidateManifest ${PROJECT_NAME})
 
-azsphere_target_add_image_package(${PROJECT_NAME} RESOURCE_FILES "index.htm" "test.jpg")
+azsphere_target_add_image_package(${PROJECT_NAME} RESOURCE_FILES "index.htm")

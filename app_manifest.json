@@ -4,27 +4,18 @@
   "ComponentId": "6d4951ba-dd78-40e6-80d6-b080a07a15cc",
   "EntryPoint": "/bin/app",
   "CmdArgs": [ 
-    "--Hostname", "iotc-bceb7c70-462f-4d6e-b6e1-5dde23de9d2e.azure-devices.net",
+    "--Hostname", "LeoLuIoTHub.azure-devices.net",
     "--ConnectionType", "DPS",
-    "--ScopeID", "0ne00446D51"
+    "--ScopeID", "0ne000B2C02"
   ],
   "Capabilities": {
     "AllowedConnections": [
       "global.azure-devices-provisioning.net",
-      "iotc-20933fa8-a2b7-4f34-9866-bf91b0e47003.azure-devices.net",
-      "iotc-757a2384-7c42-4b18-9d53-21ddf43951e5.azure-devices.net",
-      "iotc-d3a77ce8-a4c2-4f65-a6a0-de366ed66add.azure-devices.net",
-      "iotc-596cd394-dd5f-4e04-9f10-e56b415446e7.azure-devices.net",
-      "iotc-f699ffd6-f4db-4dd9-90d9-f95441d37b63.azure-devices.net",
-      "iotc-74a28209-599d-497c-95c9-6cbd6d4602fe.azure-devices.net",
-      "iotc-2973f1f0-1f2c-4e2e-970d-09f593d49ce8.azure-devices.net",
-      "iotc-235c9d8c-b624-40b0-97d2-80762382e82a.azure-devices.net",
-      "iotc-f3add93b-eadc-4990-914c-38b27cde3fda.azure-devices.net",
-      "iotc-23bfb1c0-2782-444b-b644-71479b9beb5c.azure-devices.net"
+      "LeoLuIoTHub.azure-devices.net"
     ],
     "MutableStorage": { "SizeKB": 48 },
     "AllowedTcpServerPorts": [ 8080 ],
-    "DeviceAuthentication": "2c4ca00f-a355-4317-b152-6d388998ac36",
+    "DeviceAuthentication": "b6370dd3-168e-4194-8ac6-d926b21e6cd2",
     "NetworkConfig": true,
     "WifiConfig": true
   },
