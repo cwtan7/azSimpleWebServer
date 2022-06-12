@@ -20,7 +20,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
                            ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_prov_client
                            ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_c_shared_utility)
 
-#cw_dbg target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Werror)
+# target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Werror)
 target_compile_definitions(${PROJECT_NAME} PUBLIC AZURE_IOT_HUB_CONFIGURED)
 target_link_libraries (${PROJECT_NAME} m azureiot applibs pthread gcc_s c)
 

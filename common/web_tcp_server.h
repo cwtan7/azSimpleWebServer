@@ -119,10 +119,6 @@ webServer_ServerState *webServer_Start(int epollFd, in_addr_t ipAddr, uint16_t p
 /// </summary>
 void webServer_ShutDown(webServer_ServerState *serverState);
 
-
-
-
-static _Bool isNetworkStackReady;
 webServer_ServerState* serverState;
 void ServerStoppedHandler(webServer_StopReason reason);
 

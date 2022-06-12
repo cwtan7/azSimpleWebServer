@@ -257,7 +257,7 @@ static void HandleClientReadEvent(EventData *eventData)
 					if (pos != NULL)
 						serverState->httpMethod = "POST";
 
-					if (serverState->httpMethod != "unknown")
+					if ((int)strcmp(serverState->httpMethod,"unknown") != 0 )
 					{
 						serverState->isHttp = 1;
 						size_t begin = strlen(serverState->httpMethod)+1;
@@ -272,12 +272,12 @@ static void HandleClientReadEvent(EventData *eventData)
 						}
 					}
 				}
-				char pos = strstr(serverState->input, "Content-Length:");
+				char* pos = strstr(serverState->input, "Content-Length:");
 				if ( pos != NULL){
 					char* contentLengthStr = malloc(10);
 					uint8_t begin=strlen("Content-Length:")+1;
 					strncpy(contentLengthStr, &serverState->input[begin], strlen(serverState->input) - begin);
-					serverState->contentLength=(int)atoi(contentLengthStr);
+					serverState->contentLength=(size_t)atoi(contentLengthStr);
 					free(contentLengthStr);
 				}
 
@@ -330,7 +330,7 @@ static void HandleClientReadEvent(EventData *eventData)
 			RegisterEventHandlerToEpoll(serverState->epollFd, serverState->clientFd,
 										&serverState->clientReadEvent, EPOLLIN);
 			serverState->epollInEnabled = true;
-			if(serverState->httpMethod=="POST"){
+			if((int)strcmp(serverState->httpMethod,"POST") == 0){
 				serverState->input[serverState->contentLength]='\0';
 			}
 
@@ -485,18 +485,17 @@ void web_afterprocess(void)
 
 static void LaunchWrite(webServer_ServerState *serverState)
 {
-	if(serverState->httpMethod=="GET") LaunchWriteGET(serverState);
-	else if(serverState->httpMethod=="POST") LaunchWritePOST(serverState);
+	if((int)strcmp(serverState->httpMethod,"GET") == 0) LaunchWriteGET(serverState);
+	else if((int)strcmp(serverState->httpMethod,"POST") == 0) LaunchWritePOST(serverState);
 	web_afterprocess();
 }
 
 static void LaunchWritePOST(webServer_ServerState *serverState)
 {
-	int result;
 	char *header;
 	if ((int)strcmp(serverState->post,"/uploadlog") == 0)
 	{
-		result = asprintf(&header, "HTTP/1.1 200 \015\012\
+		asprintf(&header, "HTTP/1.1 200 \015\012\
 Connection:close\015\012\
 \015\012");
 		serverState->txPayloadSize =  strlen(header);

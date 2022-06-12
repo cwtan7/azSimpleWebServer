@@ -1,7 +1,7 @@
 {
   "SchemaVersion": 1,
   "Name": "azSimpleWebServer",
-  "ComponentId": "6d4951ba-dd78-40e6-80d6-b080a07a15cc",
+  "ComponentId": "819255ff-8640-41fd-aea7-f85d34c491d5",
   "EntryPoint": "/bin/app",
   "CmdArgs": [ 
     "--Hostname", "LeoLuIoTHub.azure-devices.net",
