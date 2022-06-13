@@ -13,8 +13,6 @@ target_sources(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/user_interface.h
     ${CMAKE_CURRENT_LIST_DIR}/web_tcp_server.c
     ${CMAKE_CURRENT_LIST_DIR}/web_tcp_server.h
-    ${CMAKE_CURRENT_LIST_DIR}/epoll_timerfd_utilities.c
-    ${CMAKE_CURRENT_LIST_DIR}/epoll_timerfd_utilities.h
     ${CMAKE_CURRENT_LIST_DIR}/main.c
     ${CMAKE_CURRENT_LIST_DIR}/options.h
     ${CMAKE_CURRENT_LIST_DIR}/parson.c

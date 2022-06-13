@@ -20,6 +20,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <sys/socket.h>
 #include "applibs_versions.h"
@@ -47,21 +48,20 @@ int afterprocess = AFTER_NONE;
 char *new_wifi_ssid = NULL;
 char *new_wifi_psk = NULL;
 
-extern int epollFd;
 int timerFd = -1;
 
 // Support functions.
-static void HandleListenEvent(EventData *eventData);
-static void LaunchRead(webServer_ServerState *serverState);
-static void HandleClientReadEvent(EventData *eventData);
-static void LaunchWrite(webServer_ServerState *serverState);
-static void LaunchWriteGET(webServer_ServerState *serverState);
-static void LaunchWritePOST(webServer_ServerState *serverState);
-static void HandleClientWriteEvent(EventData *eventData);
+static void HandleListenEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context);
+static void LaunchRead(void);
+static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context);
+static void LaunchWrite(void);
+static void LaunchWriteGET(void);
+static void LaunchWritePOST(void);
+static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context);
 static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType);
 static void ReportError(const char *desc);
-static void StopServer(webServer_ServerState *serverState, webServer_StopReason reason);
-static webServer_ServerState *EventDataToServerState(EventData *eventData, size_t offset);
+static void StopServer(webServer_StopReason reason);
+static void CloseFdAndPrintError(int fd, const char *fdName);
 
 /// <summary>
 ///     Called when the TCP server stops processing messages from clients.
@@ -93,27 +93,22 @@ void ServerStoppedHandler(webServer_StopReason reason)
 	LogWebDebug("INFO: TCP server stopped: %s\n", reasonText);
 }
 
-webServer_ServerState *webServer_Start(int epollFd, in_addr_t ipAddr, uint16_t port,
+webServer_ServerState *webServer_Start(EventLoop *el, in_addr_t ipAddr, uint16_t port,
 									   int backlogSize,
 									   void (*shutdownCallback)(webServer_StopReason))
 {
-	webServer_ServerState *serverState = malloc(sizeof(*serverState));
-	if (!serverState)
-	{
-		abort();
-	}
-
+	if(serverState==NULL) serverState = malloc(sizeof(*serverState));
 	// Set EchoServer_ServerState state to unused values so it can be safely cleaned up if only a
 	// subset of the resources are successfully allocated.
-	serverState->epollFd = epollFd;
+	serverState->el = el;
 	serverState->listenFd = -1;
 	serverState->clientFd = -1;
-	serverState->listenEvent.eventHandler = HandleListenEvent;
-	serverState->clientReadEvent.eventHandler = HandleClientReadEvent;
-	serverState->epollInEnabled = false;
-	serverState->clientWriteEvent.eventHandler = HandleClientWriteEvent;
-	serverState->epollOutEnabled = false;
+	serverState->listenFDReg=NULL;
+	serverState->clientFDReg=NULL;
+
 	serverState->txPayload = NULL;
+	serverState->txPayloadSize = 0;
+	serverState->txBytesSent = 0;
 	serverState->shutdownCallback = shutdownCallback;
 
 	int sockType = SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK;
@@ -125,7 +120,7 @@ webServer_ServerState *webServer_Start(int epollFd, in_addr_t ipAddr, uint16_t p
 	}
 
 	// Be notified asynchronously when a client connects.
-	RegisterEventHandlerToEpoll(epollFd, serverState->listenFd, &serverState->listenEvent, EPOLLIN);
+	serverState->listenFDReg=EventLoop_RegisterIo(el, serverState->listenFd, EventLoop_Input,HandleListenEvent, NULL);
 
 	int result = listen(serverState->listenFd, backlogSize);
 	if (result != 0)
@@ -139,11 +134,11 @@ webServer_ServerState *webServer_Start(int epollFd, in_addr_t ipAddr, uint16_t p
 	return serverState;
 
 fail:
-	webServer_ShutDown(serverState);
+	webServer_ShutDown();
 	return NULL;
 }
 
-void webServer_ShutDown(webServer_ServerState *serverState)
+void webServer_ShutDown(void)
 {
 	if (!serverState)
 	{
@@ -156,26 +151,33 @@ void webServer_ShutDown(webServer_ServerState *serverState)
 	free(serverState->txPayload);
 }
 
-void webServer_Restart(webServer_ServerState *serverState)
+void webServer_Restart(void)
 {
-	int theEpollFd = serverState->epollFd;
-	webServer_ShutDown(serverState);
+	EventLoop * el = serverState->el;
+	webServer_ShutDown();
 
-	serverState = webServer_Start(theEpollFd, localServerIpAddress.s_addr, LocalTcpServerPort,
+	webServer_Start(el, localServerIpAddress.s_addr, LocalTcpServerPort,
 								  serverBacklogSize, ServerStoppedHandler);
 }
 
-static void HandleListenEvent(EventData *eventData)
+void CloseFdAndPrintError(int fd, const char *fdName)
 {
-	webServer_ServerState *serverState =
-		EventDataToServerState(eventData, offsetof(webServer_ServerState, listenEvent));
+    if (fd >= 0) {
+        int result = close(fd);
+        if (result != 0) {
+            Log_Debug("ERROR: Could not close fd %s: %s (%d).\n", fdName, strerror(errno), errno);
+        }
+    }
+}
+
+static void HandleListenEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
+{
 	int localFd = -1;
 
 	do
 	{
 		// Create a new accepted socket to connect to the client.
 		// The newly-accepted sockets should be opened in non-blocking mode, and use
-		// EPOLLIN and EPOLLOUT to transfer data.
 		struct sockaddr in_addr;
 		socklen_t sockLen = sizeof(in_addr);
 		localFd = accept4(serverState->listenFd, &in_addr, &sockLen, SOCK_NONBLOCK | SOCK_CLOEXEC);
@@ -199,28 +201,27 @@ static void HandleListenEvent(EventData *eventData)
 		serverState->clientFd = localFd;
 		localFd = -1;
 
-		LaunchRead(serverState);
+		LaunchRead();
 	} while (0);
 
 	close(localFd);
 }
 
-static void LaunchRead(webServer_ServerState *serverState)
+static void LaunchRead(void)
 {
 	serverState->inLineSize = 0;
-	RegisterEventHandlerToEpoll(serverState->epollFd, serverState->clientFd,
-								&serverState->clientReadEvent, EPOLLIN);
+	if(serverState->clientFDReg!=NULL) {
+		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
+		serverState->clientFDReg=NULL;
+	}
+	serverState->clientFDReg= EventLoop_RegisterIo(serverState->el, serverState->clientFd, EventLoop_Input,HandleClientReadEvent, NULL);
 }
 
-static void HandleClientReadEvent(EventData *eventData)
+static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
 {
-	webServer_ServerState *serverState =
-		EventDataToServerState(eventData, offsetof(webServer_ServerState, clientReadEvent));
-
-	if (serverState->epollInEnabled)
-	{
-		UnregisterEventHandlerFromEpoll(serverState->epollFd, serverState->clientFd);
-		serverState->epollInEnabled = false;
+	if(serverState->clientFDReg!=NULL) {
+		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
+		serverState->clientFDReg=NULL;
 	}
 
 	// Continue until no immediately available input or until an error occurs.
@@ -318,30 +319,25 @@ static void HandleClientReadEvent(EventData *eventData)
 		else if (bytesReadOneSysCall == 0)
 		{
 			LogWebDebug("INFO: TCP server: Client has closed connection, reset serverstate.\n");
-			webServer_Restart(serverState);
+			webServer_Restart();
 
 			// StopServer(serverState, EchoServer_StopReason_ClientClosed);
 			break;
 		}
 
-		// If receive buffer is empty then wait for EPOLLIN event.
 		else if (bytesReadOneSysCall == -1 && errno == EAGAIN)
 		{
-			RegisterEventHandlerToEpoll(serverState->epollFd, serverState->clientFd,
-										&serverState->clientReadEvent, EPOLLIN);
-			serverState->epollInEnabled = true;
 			if((int)strcmp(serverState->httpMethod,"POST") == 0){
 				serverState->input[serverState->contentLength]='\0';
 			}
 
 			LogWebDebug("method: %s   URI: %s   payload: %s\n", serverState->httpMethod, serverState->post, serverState->input);
-
 			// Launch send after received hearder
 			if (serverState->isHttp == 1)
-				LaunchWrite(serverState);
+				LaunchWrite();
 			else{
 				LogWebDebug("Unknown http method, skip...\n");
-				webServer_Restart(serverState);
+				webServer_Restart();
 			}
 				
 			break;
@@ -352,7 +348,7 @@ static void HandleClientReadEvent(EventData *eventData)
 		{
 			ReportError("recv");
 			LogWebDebug("TCP receive error, reset serverstate.\n");
-			webServer_Restart(serverState);
+			webServer_Restart();
 
 			//  StopServer(serverState, EchoServer_StopReason_Error);
 			break;
@@ -427,70 +423,29 @@ char *str_replace(char *body, size_t *bodylen, ...)
 	//*(body + (*bodylen - 1)) = '\0';
 }
 
-static void afterProcessTimerEventHandler(EventData *eventData)
-{
-	if (afterprocess == AFTER_FORGET)
-	{
-		WifiConfig_ForgetAllNetworks();
-	}
-	else if (afterprocess == AFTER_CHANGEWIFI)
-	{
 
-		if (strlen(new_wifi_ssid) == 0)
-			return;
-		WifiConfig_ForgetAllNetworks();
-		int newid = WifiConfig_AddNetwork();
-		WifiConfig_SetSSID(newid, new_wifi_ssid, strlen(new_wifi_ssid));
-		if (strlen(new_wifi_psk) != 0)
-		{
-			WifiConfig_SetSecurityType(newid, WifiConfig_Security_Wpa2_Psk);
-			WifiConfig_SetPSK(newid, new_wifi_psk, strlen(new_wifi_psk));
-		}
-		else
-		{
-			WifiConfig_SetSecurityType(newid, WifiConfig_Security_Open);
-		}
-
-		WifiConfig_SetNetworkEnabled(newid, true);
-
-		WifiConfig_PersistConfig();
-	}
-	afterprocess = AFTER_NONE;
-	CloseFdAndPrintError(timerFd, "afterprocess delay timer error");
-	timerFd = -1;
-}
-
-static EventData afterPrcoessTimerEventData = {.eventHandler = &afterProcessTimerEventHandler};
 
 /// <summary>
 ///     Called when the website finished send for after process
 /// </summary>
 
-void web_afterprocess(void)
-{
 
-	// Wait for 1 second ensure all data transfered before run
-	struct timespec delay = {1, 0};
-	if (timerFd <= 0)
-	{
-		timerFd = CreateTimerFdAndAddToEpoll(epollFd, &delay, &afterPrcoessTimerEventData, EPOLLIN);
-		if (timerFd < 0)
-		{
-			// cw_dbg return -1;
-			return;
-		}
+static void LaunchWrite(void)
+{
+	if((int)strcmp(serverState->httpMethod,"GET") == 0) LaunchWriteGET();
+	else if((int)strcmp(serverState->httpMethod,"POST") == 0) LaunchWritePOST();
+	else{
+		return;
 	}
+	
+	if(serverState->clientFDReg!=NULL) {
+		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
+		serverState->clientFDReg=NULL;
+	}
+	serverState->clientFDReg= EventLoop_RegisterIo(serverState->el, serverState->clientFd, EventLoop_Output,HandleClientWriteEvent, NULL);
 }
 
-
-static void LaunchWrite(webServer_ServerState *serverState)
-{
-	if((int)strcmp(serverState->httpMethod,"GET") == 0) LaunchWriteGET(serverState);
-	else if((int)strcmp(serverState->httpMethod,"POST") == 0) LaunchWritePOST(serverState);
-	web_afterprocess();
-}
-
-static void LaunchWritePOST(webServer_ServerState *serverState)
+static void LaunchWritePOST(void)
 {
 	char *header;
 	if ((int)strcmp(serverState->post,"/uploadlog") == 0)
@@ -501,17 +456,11 @@ Connection:close\015\012\
 		serverState->txPayloadSize =  strlen(header);
 		serverState->txPayload = (uint8_t *)header;
 		serverState->txBytesSent = 0;
-
-		LogWebDebug("payload: %s\n", serverState->input);
-		// TODO: send the received log file content to iot hub....
-
-		
-		HandleClientWriteEvent(&serverState->clientWriteEvent);
-		
+		// TODO: send the received log file content to iot hub....		
 	}
 }
 
-static void LaunchWriteGET(webServer_ServerState *serverState)
+static void LaunchWriteGET(void)
 {
 
 	size_t begin = 0;
@@ -774,7 +723,7 @@ static void LaunchWriteGET(webServer_ServerState *serverState)
 		if (result == -1)
 		{
 			ReportError("asprintf");
-			StopServer(serverState, EchoServer_StopReason_Error);
+			StopServer(EchoServer_StopReason_Error);
 			return;
 		}
 	}
@@ -821,18 +770,13 @@ Connection:close\015\012\
 	serverState->txPayloadSize = bodylen + headerlen;
 	serverState->txPayload = (uint8_t *)html;
 	serverState->txBytesSent = 0;
-	HandleClientWriteEvent(&serverState->clientWriteEvent);
 }
 
-static void HandleClientWriteEvent(EventData *eventData)
+static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
 {
-	webServer_ServerState *serverState =
-		EventDataToServerState(eventData, offsetof(webServer_ServerState, clientWriteEvent));
-
-	if (serverState->epollOutEnabled)
-	{
-		UnregisterEventHandlerFromEpoll(serverState->epollFd, serverState->clientFd);
-		serverState->epollOutEnabled = false;
+	if(serverState->clientFDReg!=NULL) {
+		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
+		serverState->clientFDReg=NULL;
 	}
 
 	// Continue until have written entire response, error occurs, or OS TX buffer is full.
@@ -849,12 +793,9 @@ static void HandleClientWriteEvent(EventData *eventData)
 			serverState->txBytesSent += (size_t)bytesSentOneSysCall;
 		}
 
-		// If OS TX buffer is full then wait for next EPOLLOUT.
 		else if (bytesSentOneSysCall < 0 && errno == EAGAIN)
 		{
-			RegisterEventHandlerToEpoll(serverState->epollFd, serverState->clientFd,
-										&serverState->clientWriteEvent, EPOLLOUT);
-			serverState->epollOutEnabled = true;
+			serverState->clientFDReg= EventLoop_RegisterIo(serverState->el, serverState->clientFd, EventLoop_Output,HandleClientWriteEvent, NULL);
 			return;
 		}
 
@@ -864,7 +805,7 @@ static void HandleClientWriteEvent(EventData *eventData)
 			ReportError("send");
 			// StopServer(serverState, EchoServer_StopReason_Error);
 			LogWebDebug("error in TCP sending, reset serverstate.\n");
-			webServer_Restart(serverState);
+			webServer_Restart();
 
 			return;
 		}
@@ -877,13 +818,10 @@ static void HandleClientWriteEvent(EventData *eventData)
            
     // Socket opened successfully, so transfer ownership to EchoServer_ServerState object.
 	serverState->txPayload = NULL;
-	// int fd = serverState->epollFd;
-
+	
 	// Restart for next process
 	// LogWebDebug("After http write event, reset serverstate.\n");
-	webServer_Restart(serverState);
-
-	// LaunchRead(serverState);
+	webServer_Restart();
 }
 
 static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType)
@@ -940,22 +878,15 @@ static void ReportError(const char *desc)
 	LogWebDebug("ERROR: TCP server: \"%s\", errno=%d (%s)\n", desc, errno, strerror(errno));
 }
 
-static void StopServer(webServer_ServerState *serverState, webServer_StopReason reason)
+static void StopServer(webServer_StopReason reason)
 {
 	// Stop listening for incoming connections.
 	if (serverState->listenFd != -1)
 	{
-		UnregisterEventHandlerFromEpoll(serverState->epollFd, serverState->listenFd);
+		EventLoop_UnregisterIo(serverState->el, serverState->listenFDReg);
 	}
 
 	serverState->shutdownCallback(reason);
-}
-
-static webServer_ServerState *EventDataToServerState(EventData *eventData, size_t offset)
-{
-	uint8_t *eventData8 = (uint8_t *)eventData;
-	uint8_t *serverState8 = eventData8 - offset;
-	return (webServer_ServerState *)serverState8;
 }
 
 int LogWebDebug(const char *fmt, ...)

@@ -15,11 +15,10 @@
 
 #include "netinet/in.h"
 
-
-#include "epoll_timerfd_utilities.h"
+#include <applibs/eventloop.h>
 
 #define MAX_GET_PARAMETER 16
-#define MAX_LINE_INPUT 256
+#define MAX_LINE_INPUT 200000
 
 
 #define FILEREADBUFFERSIZE 128
@@ -54,28 +53,21 @@ typedef enum {
 /// <see cref="EchoServer_ShutDown" />. The client should not directly modify member variables.
 /// </summary>
 typedef struct {
-    /// <summary>Epoll which is used to respond asynchronously to incoming connections.</summary>
-    int epollFd;
+    EventLoop *el;
+    EventRegistration *listenFDReg;
+    EventRegistration *clientFDReg;
     /// <summary>Socket which listens for incoming connections.</summary>
     int listenFd;
-    /// <summary>Callback which is invoked when a new connection is received.</summary>
-    EventData listenEvent;
     /// <summary>Accept socket. Only one client socket supported at a time.</summary>
     int clientFd;
-    /// <summary>Callback which is invoked when server receives data from client.</summary>
-    EventData clientReadEvent;
-    /// <summary>Whether currently waiting for input from client.</summary>
-    _Bool epollInEnabled;
-    /// <summary>Whether currently writing response to client.</summary>
-    _Bool epollOutEnabled;
+
     /// <summary>Number of characters received from client.</summary>
     size_t inLineSize;
     /// <summary>Data received from client.</summary>
     char* httpMethod;
     size_t contentLength;
     char input[MAX_LINE_INPUT];
-    /// <summary>Callback which is invoked when have written data to client.</summary>
-    EventData clientWriteEvent;
+    
     /// <summary>Payload to write to client.</summary>
     uint8_t *txPayload;
     /// <summary>Number of bytes to write to client.</summary>
@@ -101,14 +93,14 @@ typedef struct {
 
 /// <summary>
 /// <para>Open a non-blocking TCP listening socket on the supplied IP address and port.</para>
-/// <param name="epollFd">Descriptor to epoll created with CreateEpollFd.</param>
+/// <param name="el">eventloop.</param>
 /// <param name="ipAddr">IP address to which the listen socket is bound.</param>
 /// <param name="port">TCP port to which the socket is bound.</param>
 /// <param name="backlogSize">Listening socket queue length.</param>
 /// <returns>Server state which is used to manage the server's resources, NULL on failure.
 /// Should be disposed with <see cref="EchoServer_ShutDown" />.</returns>
 /// </summary>
-webServer_ServerState *webServer_Start(int epollFd, in_addr_t ipAddr, uint16_t port,
+webServer_ServerState *webServer_Start(EventLoop *el, in_addr_t ipAddr, uint16_t port,
                                          int backlogSize,
                                          void (*shutdownCallback)(webServer_StopReason));
 
@@ -117,7 +109,7 @@ webServer_ServerState *webServer_Start(int epollFd, in_addr_t ipAddr, uint16_t p
 /// closing listen and accepted sockets, and freeing any heap memory that was allocated.</para>
 /// <param name="serverState">Server state allocated with <see cref="EchoServer_Start" />.</param>
 /// </summary>
-void webServer_ShutDown(webServer_ServerState *serverState);
+void webServer_ShutDown(void);
 
 webServer_ServerState* serverState;
 void ServerStoppedHandler(webServer_StopReason reason);

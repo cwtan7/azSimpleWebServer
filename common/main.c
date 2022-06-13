@@ -21,7 +21,6 @@
 
 // applibs_versions.h defines the API struct versions to use for applibs APIs.
 #include "applibs_versions.h"
-#include "epoll_timerfd_utilities.h"
 
 #include <applibs/log.h>
 #include <applibs/eventloop.h>
@@ -41,8 +40,6 @@ static void ExitCodeCallbackHandler(ExitCode ec);
 
 static void ShutDownServerAndCleanup(void);
 static void MainServerStoppedHandler(webServer_StopReason reason);
-static void TimerEventHandler(EventData *eventData);
-static int Initialize(void);
 
 // Initialization/Cleanup
 #include "options.h"
@@ -57,23 +54,7 @@ static bool isConnected = false;
 static const char *serialNumber = "leosphere_001";
 static void ConnectionChangedCallbackHandler(bool connected);
 static ExitCode InitEventLoopAndConnectCloud(void);
-
-
-
-/*
-// Initialization/Cleanup
-
-
-static void ClosePeripheralsAndHandlers(void);
-
-*/
-
-
-
-// File descriptors - initialized to invalid value
- int epollFd = -1;
-static int timerFd = -1;
-
+static void ShutDownServerAndCleanup(void);
 
 
 /// <summary>
@@ -98,40 +79,32 @@ int main(int argc, char *argv[])
     Log_Debug("INFO: Web setting server application starting.\n");
     //check network
     bool isNetworkingReady = false;
-    if ((Networking_IsNetworkingReady(&isNetworkingReady) == -1) || !isNetworkingReady) {
+    if ((Networking_IsNetworkingReady(&isNetworkingReady) == -1) || !isNetworkingReady)
+    {
         Log_Debug("WARNING: Network is not ready. Device cannot connect until network is ready.\n");
     }
     exitCode = Options_ParseArgs(argc, argv);
-
-    /*
-    if (Initialize() != 0) {
-        exitCode=ExitCode_Connection_TimerStart;
-    }
-    */
-    exitCode = InitEventLoopAndConnectCloud();
-
-    if (exitCode != ExitCode_Success) {
+    if (exitCode != ExitCode_Success)
+    {
         return exitCode;
     }
 
-    /*
-    serverState = webServer_Start(epollFd, localServerIpAddress.s_addr, LocalTcpServerPort,
+    exitCode = InitEventLoopAndConnectCloud();
+    if (exitCode != ExitCode_Success)
+    {
+        return exitCode;
+    }
+
+    
+    serverState = webServer_Start(eventLoop, localServerIpAddress.s_addr, LocalTcpServerPort,
                                   serverBacklogSize, MainServerStoppedHandler);
     if (serverState == NULL)
     {
         exitCode = ExitCode_WebServer_Start;
         return exitCode;
     }
-    */
-
-    // now it is both epoll and eventloop, will sort it out later
+    
     while (exitCode == ExitCode_Success) {
-        /*
-        if (WaitForEventAndCallHandler(epollFd) != 0) {
-            exitCode = ExitCode_Main_EventLoopFail;
-        }
-        */
-       
         EventLoop_Run_Result result = EventLoop_Run(eventLoop, -1, true);
         // Continue if interrupted by signal, e.g. due to breakpoint being set.
         if (result == EventLoop_Run_Failed && errno != EINTR) {
@@ -143,54 +116,15 @@ int main(int argc, char *argv[])
     Log_Debug("INFO: Application exiting.\n");
     return exitCode;
 }
- 
-
-/// <summary>
-///     The timer event handler.
-/// </summary>
-static void TimerEventHandler(EventData *eventData)
-{
-    //TODO: old one using epoll... right now it is still used by the tcp server listener
-
-    if (ConsumeTimerFdEvent(timerFd) != 0) {
-        exitCode = ExitCode_Connection_TimerConsume;
-        return;
-    }
-}
 
 
-/// <summary>
-///     Set up SIGTERM termination handler, set up epoll event handling, configure network
-///     interface, start SNTP server and TCP server.
-/// </summary>
-/// <returns>0 on success, or -1 on failure</returns>
-// event handler data structures. Only the event handler field needs to be populated.
-static EventData afterPrcoessTimerEventData = {.eventHandler = &TimerEventHandler};
-static int Initialize(void)
+static ExitCode InitEventLoopAndConnectCloud(void)
 {
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
     action.sa_handler = TerminationHandler;
     sigaction(SIGTERM, &action, NULL);
 
-    epollFd = CreateEpollFd();
-    if (epollFd < 0) {
-        return -1;
-    }
-
-    // Check network interface status at the specified period until it is ready.
-	// wlan should set longer check interval (around 8s) otherwise will hang
-    struct timespec checkInterval = {10, 0};
-    timerFd = CreateTimerFdAndAddToEpoll(epollFd, &checkInterval, &afterPrcoessTimerEventData, EPOLLIN);
-    if (timerFd < 0) {
-        return -1;
-    }
-
-    return 0;
-}
-
-static ExitCode InitEventLoopAndConnectCloud(void)
-{
     eventLoop = EventLoop_Create();
     if (eventLoop == NULL) {
         Log_Debug("Could not create event loop.\n");
@@ -233,14 +167,11 @@ static void ConnectionChangedCallbackHandler(bool connected)
     }
 }
 
-/// <summary>
-///     Shut down TCP server and close epoll event handler.
-/// </summary>
 static void ShutDownServerAndCleanup(void)
 {
-    webServer_ShutDown(serverState);
-    CloseFdAndPrintError(epollFd, "Epoll");
-    CloseFdAndPrintError(timerFd, "Timer");
+    webServer_ShutDown();
+    Cloud_Cleanup();
+    EventLoop_Close(eventLoop);
 }
 
 
