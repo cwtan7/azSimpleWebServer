@@ -122,6 +122,26 @@ Cloud_Result Cloud_SendTelemetry(const Cloud_Telemetry *telemetry, time_t timest
     return result;
 }
 
+Cloud_Result Cloud_SendLogPayload(char *payload, time_t timestamp)
+{
+    char *utcDateTime = NULL;
+    if (timestamp != -1) {
+        BuildUtcDateTimeString(dateTimeBuffer, sizeof(dateTimeBuffer), timestamp);
+        utcDateTime = dateTimeBuffer;
+    }
+    JSON_Value *theJson = json_value_init_object();
+    JSON_Object *theJsonRoot = json_value_get_object(theJson);
+    json_object_dotset_string(theJsonRoot, "payload", payload);
+    char *serializedTelemetry = json_serialize_to_string(theJson);
+    AzureIoT_Result aziotResult = AzureIoT_SendTelemetry(serializedTelemetry, utcDateTime, NULL);
+    Cloud_Result result = AzureIoTToCloudResult(aziotResult);
+
+    json_free_serialized_string(serializedTelemetry);
+    json_value_free(theJson);
+
+    return result;
+}
+
 Cloud_Result Cloud_SendThermometerMovedEvent(time_t timestamp)
 {
     char *utcDateTime = NULL;
@@ -167,6 +187,8 @@ Cloud_Result Cloud_SendThermometerTelemetryUploadEnabledChangedEvent(bool upload
 
     return result;
 }
+
+
 
 Cloud_Result Cloud_SendDeviceDetails(const char *serialNumber)
 {

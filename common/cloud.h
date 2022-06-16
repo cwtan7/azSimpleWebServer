@@ -99,6 +99,9 @@ void Cloud_Cleanup(void);
 /// <returns>A <see cref="Cloud_Result" /> indicating success or failure.</returns>
 Cloud_Result Cloud_SendTelemetry(const Cloud_Telemetry *telemetry, time_t timestamp);
 
+
+
+
 /// <summary>
 /// Queue sending an event to the cloud indicating that the device location has changed.
 /// </summary>
@@ -120,3 +123,6 @@ Cloud_Result Cloud_SendThermometerTelemetryUploadEnabledChangedEvent(bool upload
 /// <param name="serialNumber">The device's serial number</param>
 /// <returns>A <see cref="Cloud_Result" /> indicating success or failure.</returns>
 Cloud_Result Cloud_SendDeviceDetails(const char *serialNumber);
+
+
+Cloud_Result Cloud_SendLogPayload(char *payload, time_t timestamp);

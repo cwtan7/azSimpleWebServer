@@ -29,6 +29,7 @@
 #include <applibs/storage.h>
 #include <applibs/wificonfig.h>
 #include "web_tcp_server.h"
+#include "cloud.h"
 
 static bool isNetworkStackReady = false;
 webServer_ServerState *serverState = NULL;
@@ -62,6 +63,7 @@ static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType);
 static void ReportError(const char *desc);
 static void StopServer(webServer_StopReason reason);
 static void CloseFdAndPrintError(int fd, const char *fdName);
+static const char *CloudResultToString(Cloud_Result result);
 
 /// <summary>
 ///     Called when the TCP server stops processing messages from clients.
@@ -453,11 +455,36 @@ static void LaunchWritePOST(void)
 		asprintf(&header, "HTTP/1.1 200 \015\012\
 Connection:close\015\012\
 \015\012");
-		serverState->txPayloadSize =  strlen(header);
+		serverState->txPayloadSize = strlen(header);
 		serverState->txPayload = (uint8_t *)header;
 		serverState->txBytesSent = 0;
-		// TODO: send the received log file content to iot hub....		
+		// TODO: send the received log file content to iot hub....
+
+		time_t now;
+		time(&now);
+		Cloud_Result result = Cloud_SendLogPayload(serverState->input, now);
+		if (result != Cloud_Result_OK)
+		{
+			Log_Debug("WARNING: Could not send thermometer telemetry to cloud: %s\n",
+					  CloudResultToString(result));
+		}else{
+			Log_Debug("Sent telemetry\n");
+		}
 	}
+}
+
+static const char *CloudResultToString(Cloud_Result result)
+{
+    switch (result) {
+    case Cloud_Result_OK:
+        return "OK";
+    case Cloud_Result_NoNetwork:
+        return "No network connection available";
+    case Cloud_Result_OtherFailure:
+        return "Other failure";
+    }
+
+    return "Unknown Cloud_Result";
 }
 
 static void LaunchWriteGET(void)
