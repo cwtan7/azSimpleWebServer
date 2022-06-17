@@ -231,6 +231,7 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 	uint8_t last;
 	serverState->httpMethod = "unknown";
 	uint8_t firstHeaderRow = 1;
+	uint8_t postPayloadStart = 0;
 
 	while (true)
 	{
@@ -243,12 +244,15 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 		if (bytesReadOneSysCall == 1)
 		{
 			// If received newline then print received line to debug log.
-			if (b == '\r')
+			if (b == '\r' && postPayloadStart==0)
 			{
+				if(strlen(serverState->input)==0){//post payload starts after a complete empty line after http header
+					postPayloadStart=1;
+				}
 				serverState->input[serverState->inLineSize] = '\0';
 				serverState->inLineSize = 0;
 			}
-			else if (b == '\n' && last == '\r')
+			else if (b == '\n' && last == '\r' && postPayloadStart==0)
 			{
 				if (firstHeaderRow)
 				{
@@ -285,18 +289,11 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 				}
 
 				// uncomment below line if you wanna see each header in log
-				//LogWebDebug("INFO: TCP server: Received \"%s\"\n", serverState->input);
+				LogWebDebug("INFO: TCP server: Received \"%s\"\n", serverState->input);
 			}
 
 			// If new character is not printable then discard.
-			else if (!isprint(b))
-			{
-				// Special case '\n' to avoid printing a message for every line of input.
-				if (b != '\n')
-				{
-					LogWebDebug("INFO: TCP server: Discarding unprintable character 0x%02x\n", b);
-				}
-			}
+			
 
 			// If new character would leave no space for NUL terminator then reset buffer.
 			else if (serverState->inLineSize == maxChars)
@@ -329,10 +326,11 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 
 		else if (bytesReadOneSysCall == -1 && errno == EAGAIN)
 		{
-			if((int)strcmp(serverState->httpMethod,"POST") == 0){
-				serverState->input[serverState->contentLength]='\0';
+			if(postPayloadStart==1){
+				//CHECK: why the inlinesize is shorter than contentlength?
+				LogWebDebug("length:%d %d\n",serverState->inLineSize, serverState->contentLength);
 			}
-			LogWebDebug("length:%d %d\n",serverState->inLineSize, serverState->contentLength);
+
 			LogWebDebug("method: %s   URI: %s   payload: %s\n", serverState->httpMethod, serverState->post, serverState->input);
 			// Launch send after received hearder
 			if (serverState->isHttp == 1)
