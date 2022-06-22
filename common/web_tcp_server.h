@@ -17,11 +17,16 @@
 
 #include <applibs/eventloop.h>
 
-#define MAX_GET_PARAMETER 16
-#define MAX_LINE_INPUT 200000
+#define MAX_GET_PARAMETER   	16
 
-
-#define FILEREADBUFFERSIZE 128
+#if defined(ENABLE_BASE64_ENCODE)
+#define MAX_LINE_INPUT      	(36 * 1024)         // 36KB Max size
+#define B64_ENCODE_BUF_SIZE 	(52 * 1024)         // +40% margin for Base64 encode output
+#else
+#define MAX_LINE_INPUT      	(58 * 1024)         // 64KB Max size
+#endif
+#define FILEREADBUFFERSIZE 		128
+#define MAX_SOCKET_BUFF_SIZE	(8 * 1024)			// Socket Buffer Size @ 8KB
 
 #define MIME_NONE -1
 #define MIME_TEXT 1
@@ -30,10 +35,6 @@
 
    // Ethernet / TCP server settings.
 static struct in_addr localServerIpAddress;
-#if 0 //cw_dbg
-static struct in_addr subnetMask;
-static struct in_addr gatewayIpAddress;
-#endif
 static const uint16_t LocalTcpServerPort = 8080;
 static int serverBacklogSize = 3;
 // WIFI 
@@ -67,7 +68,12 @@ typedef struct {
     char* httpMethod;
     size_t contentLength;
     char input[MAX_LINE_INPUT];
-    
+#if defined(ENABLE_BASE64_ENCODE)
+    /// <summary>Scratch buffer for encoding input size +40%. Need to revisit how to make it more robust and dynamic according to input max size</summary>
+    char encode_b64_buf[B64_ENCODE_BUF_SIZE];
+    /// <summary>Encoded Size.</summary>
+    size_t encoded_size;
+#endif
     /// <summary>Payload to write to client.</summary>
     uint8_t *txPayload;
     /// <summary>Number of bytes to write to client.</summary>
@@ -77,8 +83,7 @@ typedef struct {
     size_t txBytesSent;
 	/// <summary>is HTTP header</summary>
 	size_t isHttp;
-	
-
+	/// <summary> POST Content
 	char post[256];
 
 

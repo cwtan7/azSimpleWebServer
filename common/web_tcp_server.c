@@ -30,6 +30,7 @@
 #include <applibs/wificonfig.h>
 #include "web_tcp_server.h"
 #include "cloud.h"
+#include "utils.h"
 
 static bool isNetworkStackReady = false;
 webServer_ServerState *serverState = NULL;
@@ -231,6 +232,7 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 	uint8_t last;
 	serverState->httpMethod = "unknown";
 	uint8_t firstHeaderRow = 1;
+	uint8_t postPayloadStart = false;
 
 	while (true)
 	{
@@ -243,12 +245,12 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 		if (bytesReadOneSysCall == 1)
 		{
 			// If received newline then print received line to debug log.
-			if (b == '\r')
+			if (b == '\r' && postPayloadStart == false)
 			{
 				serverState->input[serverState->inLineSize] = '\0';
-				serverState->inLineSize = 0;
+				serverState->inLineSize = 0;	
 			}
-			else if (b == '\n' && last == '\r')
+			else if (b == '\n' && last == '\r' && postPayloadStart == false)
 			{
 				if (firstHeaderRow)
 				{
@@ -285,9 +287,19 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 				}
 
 				// uncomment below line if you wanna see each header in log
-				//LogWebDebug("INFO: TCP server: Received \"%s\"\n", serverState->input);
+				// LogWebDebug("INFO: TCP server: Received \"%s\", %d\n", serverState->input, strlen(serverState->input));
+
+#if defined(ENABLE_BASE64_ENCODE)				
+				//post payload starts after a complete empty line after http header
+				if( (postPayloadStart == false) &&
+						(strlen(serverState->input) == 0) && ((int)strcmp(serverState->httpMethod,"POST") == 0) )
+				{
+					postPayloadStart = true;
+				}
+#endif
 			}
 
+#if !defined(ENABLE_BASE64_ENCODE)
 			// If new character is not printable then discard.
 			else if (!isprint(b))
 			{
@@ -296,7 +308,8 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 				{
 					LogWebDebug("INFO: TCP server: Discarding unprintable character 0x%02x\n", b);
 				}
-			}
+			}			
+#endif
 
 			// If new character would leave no space for NUL terminator then reset buffer.
 			else if (serverState->inLineSize == maxChars)
@@ -329,20 +342,73 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 
 		else if (bytesReadOneSysCall == -1 && errno == EAGAIN)
 		{
-			if((int)strcmp(serverState->httpMethod,"POST") == 0){
-				serverState->input[serverState->contentLength]='\0';
+			unsigned int isComplete = true;
+			size_t PayloadSize;
+
+#if !defined(ENABLE_BASE64_ENCODE)
+			if((int)strcmp(serverState->httpMethod,"POST") == 0)
+			{
+				if (serverState->inLineSize < serverState->contentLength)
+				{
+					// Uncomment to CHECK: Received Size Vs ContentLength?
+					// LogWebDebug("ERROR: Received Size Mismatched: %d, with Actual Size %d\n",serverState->inLineSize, serverState->contentLength);
+					isComplete = false;
+				}
+				else 
+				{
+					serverState->input[serverState->contentLength]='\0';
+					
+					// LogWebDebug("INFO: Received Size: %d, with Actual Size %d\n",serverState->inLineSize, serverState->contentLength);
+					PayloadSize = serverState->inLineSize;
+					isComplete = true;
+				}
 			}
-			LogWebDebug("length:%d %d\n",serverState->inLineSize, serverState->contentLength);
-			LogWebDebug("method: %s   URI: %s   payload: %s\n", serverState->httpMethod, serverState->post, serverState->input);
-			// Launch send after received hearder
-			if (serverState->isHttp == 1)
-				LaunchWrite();
-			else{
-				LogWebDebug("Unknown http method, skip...\n");
-				webServer_Restart();
+#else
+            unsigned int encode_result;
+
+			if(postPayloadStart==1)
+			{
+				if (serverState->inLineSize < serverState->contentLength)
+				{
+					// Uncomment to CHECK: Received Size Vs ContentLength?
+					// LogWebDebug("ERROR: Received Size Mismatched: %d, with Actual Size %d\n",serverState->inLineSize, serverState->contentLength);
+
+					// Allow to continue to receive till all Content Length in input buffer
+					isComplete = false;
+				}
+				else if (serverState->inLineSize == serverState->contentLength)
+				{
+					// encode to Base64 before formatting to JSON
+					encode_result = _util_base64_encode((unsigned char *)serverState->input, serverState->inLineSize, (unsigned char *)serverState->encode_b64_buf, sizeof(serverState->encode_b64_buf), &serverState->encoded_size);
+					if ((encode_result == 0/*NX_SUCCESS*/) && (serverState->encoded_size > 0))
+					{
+						LogWebDebug("INFO: Successfully Encoded Base64: %d bytes\n", serverState->encoded_size);
+						PayloadSize = serverState->encoded_size;
+						isComplete = true;
+					}
+					else
+					{
+						LogWebDebug("ERROR: Decoding fail with error code");
+						webServer_Restart();
+						break;
+					}
+				}
 			}
-				
-			break;
+#endif
+
+			if (isComplete)
+			{
+				LogWebDebug("Method: %s   URI: %s   Payload: %d bytes\n", serverState->httpMethod, serverState->post, PayloadSize);
+				// Launch send after received hearder
+				if (serverState->isHttp == 1)
+					LaunchWrite();
+				else{
+					LogWebDebug("Unknown http method, skip...\n");
+					webServer_Restart();
+				}
+					
+				break;
+			}
 		}
 
 		// Another error occured so abort the program.
@@ -376,7 +442,7 @@ char *str_replace(char *body, size_t *bodylen, ...)
 	}
 
 	va_list valist;
-	// cw_dbg va_start(valist, num);
+	//org va_start(valist, num);
 	va_start(valist, bodylen);
 
 	char *pos = NULL;
@@ -462,13 +528,17 @@ Connection:close\015\012\
 
 		time_t now;
 		time(&now);
+#if defined(ENABLE_BASE64_ENCODE)
+		Cloud_Result result = Cloud_SendLogPayload(serverState->encode_b64_buf, now);
+#else
 		Cloud_Result result = Cloud_SendLogPayload(serverState->input, now);
+#endif
 		if (result != Cloud_Result_OK)
 		{
 			Log_Debug("WARNING: Could not send thermometer telemetry to cloud: %s\n",
 					  CloudResultToString(result));
 		}else{
-			Log_Debug("Sent telemetry\n");
+			Log_Debug("INFO: Sent Telemetry\n");
 		}
 	}
 }
@@ -498,7 +568,6 @@ static void LaunchWriteGET(void)
 
 	strncpy(path, &serverState->post[begin], end);
 	path[end - begin] = '\0';
-	// cw_dbg int update = 3;
 	size_t bodylen = 0;
 
 	// Set value for GET query
@@ -562,8 +631,7 @@ static void LaunchWriteGET(void)
 
 	if (!strcmp(path, "/"))
 	{
-		// cw_dbg char* first = "index.htm";
-		path = "/index.htm";
+		path = "/html/index.htm";
 	}
 
 	const char delim[2] = ".";
@@ -714,8 +782,6 @@ static void LaunchWriteGET(void)
 
 			} while (true);
 
-			// cw_dbg free(buf);
-
 			if (mimetype == MIME_TEXT)
 			{
 				data = (char *)realloc(data, ((total) + 1) * sizeof(char));
@@ -743,7 +809,6 @@ static void LaunchWriteGET(void)
 						  localServerIpAddress.s_addr, LocalTcpServerPort);
 
 		bodylen = strlen(body);
-		// cw_dbg mimetype == MIME_TEXT;
 		mimetype = MIME_TEXT;
 		mime = "text/html";
 
@@ -775,7 +840,6 @@ Connection:close\015\012\
 \015\012",
 					  status, bodylen, mime);
 
-	// cw_dbg int headerlen = strlen(header);
 	size_t headerlen = strlen(header);
 
 	if (mimetype == MIME_TEXT)
@@ -866,6 +930,12 @@ static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType)
 			break;
 		}
 
+    	// Reconfigure Socket Tx/Rx Buffer Size
+        int size = MAX_SOCKET_BUFF_SIZE;
+    
+        setsockopt(localFd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+        setsockopt(localFd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+    
 		// Enable rebinding soon after a socket has been closed.
 		int enableReuseAddr = 1;
 		int r = setsockopt(localFd, SOL_SOCKET, SO_REUSEADDR, &enableReuseAddr,

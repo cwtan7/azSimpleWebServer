@@ -51,7 +51,7 @@ static EventLoop *eventLoop = NULL;
 #include "cloud.h"
 static const char *CloudResultToString(Cloud_Result result);
 static bool isConnected = false;
-static const char *serialNumber = "leosphere_001";
+static const char *serialNumber = "AzSphere-SimpleWebServ-001";
 static void ConnectionChangedCallbackHandler(bool connected);
 static ExitCode InitEventLoopAndConnectCloud(void);
 static void ShutDownServerAndCleanup(void);

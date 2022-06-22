@@ -131,6 +131,7 @@ Cloud_Result Cloud_SendLogPayload(char *payload, time_t timestamp)
     }
     JSON_Value *theJson = json_value_init_object();
     JSON_Object *theJsonRoot = json_value_get_object(theJson);
+    //TBD json_object_dotset_number(telemetryRoot, "size", telemetry->payload_size);
     json_object_dotset_string(theJsonRoot, "payload", payload);
     char *serializedTelemetry = json_serialize_to_string(theJson);
     AzureIoT_Result aziotResult = AzureIoT_SendTelemetry(serializedTelemetry, utcDateTime, NULL);

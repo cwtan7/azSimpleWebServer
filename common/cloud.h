@@ -37,6 +37,8 @@ typedef void (*Cloud_ConnectionChangedCallbackType)(bool connected);
 /// </summary>
 typedef struct {
     float temperature;
+    char *payload;
+    size_t payload_size;
 } Cloud_Telemetry;
 
 /// <summary>

@@ -4,18 +4,18 @@
   "ComponentId": "819255ff-8640-41fd-aea7-f85d34c491d5",
   "EntryPoint": "/bin/app",
   "CmdArgs": [ 
-    "--Hostname", "LeoLuIoTHub.azure-devices.net",
+    "--Hostname", "AzSphere-BootCamp-IoTHub.azure-devices.net",
     "--ConnectionType", "DPS",
-    "--ScopeID", "0ne000B2C02"
+    "--ScopeID", "dps-scope-id"
   ],
   "Capabilities": {
     "AllowedConnections": [
       "global.azure-devices-provisioning.net",
-      "LeoLuIoTHub.azure-devices.net"
+      "your-iothub-url"
     ],
     "MutableStorage": { "SizeKB": 48 },
     "AllowedTcpServerPorts": [ 8080 ],
-    "DeviceAuthentication": "b6370dd3-168e-4194-8ac6-d926b21e6cd2",
+    "DeviceAuthentication": "azsphere-tenant-id",
     "NetworkConfig": true,
     "WifiConfig": true
   },

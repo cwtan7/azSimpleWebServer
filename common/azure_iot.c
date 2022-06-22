@@ -292,7 +292,7 @@ static void DeviceTwinCallback(DEVICE_TWIN_UPDATE_STATE updateState, const unsig
 AzureIoT_Result AzureIoT_SendTelemetry(const char *jsonMessage, const char *iso8601DateTimeString,
                                        void *context)
 {
-    Log_Debug("Sending Azure IoT Hub telemetry: %s.\n", jsonMessage);
+    Log_Debug("Sending Azure IoT Hub telemetry: %d bytes.\n", strlen(jsonMessage));
 
     // Check whether the device is connected to the internet.
     if (IsConnectionReadyToSendTelemetry() == false) {

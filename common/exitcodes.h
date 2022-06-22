@@ -56,7 +56,11 @@ typedef enum {
     ExitCode_Init_AzureIoTDoWorkTimer = 30,
     ExitCode_AzureIoTDoWorkTimer_Consume = 31,
 
-    ExitCode_WebServer_Start = 32
+    ExitCode_WebServer_Start = 32,
+
+    /* Util Error Code */
+    ExitCode_Util_Ptr_Error = 33,
+    ExitCode_Util_Size_Error = 34
 } ExitCode;
 
 /// <summary>

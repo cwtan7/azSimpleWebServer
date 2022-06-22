@@ -5,11 +5,39 @@ cmake_minimum_required (VERSION 3.10)
 
 project (azSimpleWebServer C)
 
+#######################################################
+# Add CMAKE Option
+#######################################################
+option(C_CODE_BASE64_ENCODE "Use Source Code Level Base64 encoding" OFF)
+
 azsphere_configure_tools(TOOLS_REVISION "22.02")
 azsphere_configure_api(TARGET_API_SET "12")
 
-# Create executable
+#######################################################
+# Configuring index.html based on data format type
+#######################################################
+if(C_CODE_BASE64_ENCODE)
+    # Base64 conversion on-the-fly at server side (source code level)
+    set(DATA_FORMAT "raw")
+else()
+    # Base64 Pre-conversion expected at client side
+    set(DATA_FORMAT "txt")
+endif()
 
+set(INDEX_HTML_FILENAME "index.htm")
+set(INDEX_HTML_CFG_DIR "${CMAKE_SOURCE_DIR}/html")
+set(INDEX_HTML_SRC_DIR "${INDEX_HTML_CFG_DIR}/${DATA_FORMAT}/${INDEX_HTML_FILENAME}")
+set(INDEX_HTML_DST_DIR "${INDEX_HTML_CFG_DIR}/${INDEX_HTML_FILENAME}")
+
+add_custom_command(OUTPUT ${INDEX_HTML_DST_DIR}
+    PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${INDEX_HTML_SRC_DIR} ${INDEX_HTML_DST_DIR}
+    COMMENT "=================== Generating ${INDEX_HTML_FILENAME} file ..."
+)
+
+#######################################################
+# Create executable
+#######################################################
 add_executable(${PROJECT_NAME} "")
 add_subdirectory(common)
 add_subdirectory(DPS)
@@ -20,9 +48,12 @@ target_include_directories(${PROJECT_NAME} PUBLIC
                            ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_prov_client
                            ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_c_shared_utility)
 
-# target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Werror)
-target_compile_definitions(${PROJECT_NAME} PUBLIC AZURE_IOT_HUB_CONFIGURED)
 target_link_libraries (${PROJECT_NAME} m azureiot applibs pthread gcc_s c)
+
+# target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Werror)
+if (C_CODE_BASE64_ENCODE)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_BASE64_ENCODE)
+endif()
 
 # TARGET_HARDWARE and TARGET_DEFINITION relate to the hardware definition targeted by this sample.
 # When using this sample with other hardware, replace TARGET_HARDWARE with the name of that hardware.
@@ -65,4 +96,4 @@ endif()
 
 add_dependencies(ValidateManifest ${PROJECT_NAME})
 
-azsphere_target_add_image_package(${PROJECT_NAME} RESOURCE_FILES "index.htm")
+azsphere_target_add_image_package(${PROJECT_NAME} RESOURCE_FILES "html/index.htm")

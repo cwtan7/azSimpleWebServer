@@ -1,3 +1,10 @@
+if (C_CODE_BASE64_ENCODE)
+    set(COMMON_UTILS_TARGET_FILES
+        ${CMAKE_CURRENT_LIST_DIR}/utils.c
+        ${CMAKE_CURRENT_LIST_DIR}/utils.h
+    )
+endif()
+
 target_sources(${PROJECT_NAME}
     PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/applibs_versions.h
@@ -20,4 +27,5 @@ target_sources(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/mt3620_avnet_dev.h
     ${CMAKE_CURRENT_LIST_DIR}/mt3620_rdb.h
     ${CMAKE_CURRENT_LIST_DIR}/resource.h
+    ${COMMON_UTILS_TARGET_FILES}
 )
