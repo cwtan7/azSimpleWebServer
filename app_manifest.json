@@ -4,14 +4,14 @@
   "ComponentId": "819255ff-8640-41fd-aea7-f85d34c491d5",
   "EntryPoint": "/bin/app",
   "CmdArgs": [ 
-    "--Hostname", "AzSphere-BootCamp-IoTHub.azure-devices.net",
+    "--Hostname", "iothub-url",
     "--ConnectionType", "DPS",
     "--ScopeID", "dps-scope-id"
   ],
   "Capabilities": {
     "AllowedConnections": [
       "global.azure-devices-provisioning.net",
-      "your-iothub-url"
+      "iothub-url"
     ],
     "MutableStorage": { "SizeKB": 48 },
     "AllowedTcpServerPorts": [ 8080 ],

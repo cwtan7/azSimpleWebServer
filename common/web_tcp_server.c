@@ -29,11 +29,9 @@
 #include <applibs/storage.h>
 #include <applibs/wificonfig.h>
 #include "web_tcp_server.h"
+#include "privatenetserv.h"
 #include "cloud.h"
 #include "utils.h"
-
-static bool isNetworkStackReady = false;
-webServer_ServerState *serverState = NULL;
 
 #define MAX_WEBLOG 2048
 
@@ -54,60 +52,40 @@ int timerFd = -1;
 
 // Support functions.
 static void HandleListenEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context);
-static void LaunchRead(void);
-static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context);
-static void LaunchWrite(void);
-static void LaunchWriteGET(void);
-static void LaunchWritePOST(void);
-static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context);
-static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType);
+static void LaunchRead(webServer_ServerState *serverState);
+static void HandleClientEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context);
+static void HandleClientReadEvent(webServer_ServerState *serverState);
+static void LaunchWrite(webServer_ServerState *serverState);
+static void LaunchWriteGET(webServer_ServerState *serverState);
+static void LaunchWritePOST(webServer_ServerState *serverState);
+static void HandleClientWriteEvent(webServer_ServerState *serverState);
+static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType, ExitCode *callerExitCode);
+static void StopServer(webServer_ServerState *serverState, webServer_StopReason reason);
+static void RestartServer(webServer_StopReason reason);
+
 static void ReportError(const char *desc);
-static void StopServer(webServer_StopReason reason);
 static void CloseFdAndPrintError(int fd, const char *fdName);
 static const char *CloudResultToString(Cloud_Result result);
 
-/// <summary>
-///     Called when the TCP server stops processing messages from clients.
-/// </summary>
-void ServerStoppedHandler(webServer_StopReason reason)
-{
-	const char *reasonText;
-	switch (reason)
-	{
-	case EchoServer_StopReason_ClientClosed:
-		reasonText = "client closed the connection.";
 
-		break;
-
-	case EchoServer_StopReason_Error:
-		//	terminationRequired = true;
-		reasonText = "an error occurred. See previous log output for more information.";
-		break;
-
-	default:
-		//	terminationRequired = true;
-		reasonText = "unknown reason.";
-		break;
-	}
-
-	// Restart server
-	isNetworkStackReady = false;
-
-	LogWebDebug("INFO: TCP server stopped: %s\n", reasonText);
-}
-
-webServer_ServerState *webServer_Start(EventLoop *el, in_addr_t ipAddr, uint16_t port,
+webServer_ServerState *webServer_Start(EventLoop *eventLoopInstance, in_addr_t ipAddr, uint16_t port,
 									   int backlogSize,
-									   void (*shutdownCallback)(webServer_StopReason))
+									   void (*shutdownCallback)(webServer_StopReason),
+                                       ExitCode *callerExitCode)									   
 {
-	if(serverState==NULL) serverState = malloc(sizeof(*serverState));
+	webServer_ServerState *serverState = GetServerState();
+	if (serverState == NULL) 
+	{
+		serverState = malloc(sizeof(*serverState));
+	}
 	// Set EchoServer_ServerState state to unused values so it can be safely cleaned up if only a
 	// subset of the resources are successfully allocated.
-	serverState->el = el;
+	serverState->eventLoop = eventLoopInstance;
+
 	serverState->listenFd = -1;
-	serverState->clientFd = -1;
-	serverState->listenFDReg=NULL;
-	serverState->clientFDReg=NULL;
+    serverState->listenEventReg = NULL;
+    serverState->clientFd = -1;
+    serverState->clientEventReg = NULL;
 
 	serverState->txPayload = NULL;
 	serverState->txPayloadSize = 0;
@@ -115,7 +93,7 @@ webServer_ServerState *webServer_Start(EventLoop *el, in_addr_t ipAddr, uint16_t
 	serverState->shutdownCallback = shutdownCallback;
 
 	int sockType = SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK;
-	serverState->listenFd = OpenIpV4Socket(ipAddr, port, sockType);
+	serverState->listenFd = OpenIpV4Socket(ipAddr, port, sockType, callerExitCode);
 	if (serverState->listenFd < 0)
 	{
 		ReportError("open socket");
@@ -123,7 +101,12 @@ webServer_ServerState *webServer_Start(EventLoop *el, in_addr_t ipAddr, uint16_t
 	}
 
 	// Be notified asynchronously when a client connects.
-	serverState->listenFDReg=EventLoop_RegisterIo(el, serverState->listenFd, EventLoop_Input,HandleListenEvent, NULL);
+	serverState->listenEventReg = EventLoop_RegisterIo(
+        eventLoopInstance, serverState->listenFd, EventLoop_Input, HandleListenEvent, serverState);
+    if (serverState->listenEventReg == NULL) {
+        ReportError("register listen event");
+        goto fail;
+    }
 
 	int result = listen(serverState->listenFd, backlogSize);
 	if (result != 0)
@@ -137,33 +120,28 @@ webServer_ServerState *webServer_Start(EventLoop *el, in_addr_t ipAddr, uint16_t
 	return serverState;
 
 fail:
-	webServer_ShutDown();
+	webServer_ShutDown(serverState);
 	return NULL;
 }
 
-void webServer_ShutDown(void)
+void webServer_ShutDown(webServer_ServerState *serverState)
 {
 	if (!serverState)
 	{
 		return;
 	}
 
+    EventLoop_UnregisterIo(serverState->eventLoop, serverState->clientEventReg); // newly added
 	CloseFdAndPrintError(serverState->clientFd, "clientFd");
+
+	EventLoop_UnregisterIo(serverState->eventLoop, serverState->listenEventReg); //cw_dbg newly added
 	CloseFdAndPrintError(serverState->listenFd, "listenFd");
 
 	free(serverState->txPayload);
 }
 
-void webServer_Restart(void)
-{
-	EventLoop * el = serverState->el;
-	webServer_ShutDown();
 
-	webServer_Start(el, localServerIpAddress.s_addr, LocalTcpServerPort,
-								  serverBacklogSize, ServerStoppedHandler);
-}
-
-void CloseFdAndPrintError(int fd, const char *fdName)
+static void CloseFdAndPrintError(int fd, const char *fdName)
 {
     if (fd >= 0) {
         int result = close(fd);
@@ -175,7 +153,8 @@ void CloseFdAndPrintError(int fd, const char *fdName)
 
 static void HandleListenEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
 {
-	int localFd = -1;
+    webServer_ServerState *serverState = (webServer_ServerState *)context;
+    int localFd = -1;
 
 	do
 	{
@@ -190,42 +169,54 @@ static void HandleListenEvent(EventLoop *el, int fd, EventLoop_IoEvents events, 
 			break;
 		}
 
-		LogWebDebug("INFO: TCP server: request from client connection (fd %d).\n", localFd);
+		LogWebDebug("INFO: TCP server: Request from client connection (fd %d).\n", localFd);
 
 		// If already have a client, then close the newly-accepted socket.
-
 		if (serverState->clientFd >= 0)
 		{
 			LogWebDebug("INFO: TCP server: Reject request fd %d as there is already one under processing.\n", localFd);
 			break;
 		}
 
+		serverState->clientEventReg = EventLoop_RegisterIo(serverState->eventLoop, localFd, 0x0,
+                                                           HandleClientEvent, serverState);
+        if (serverState->clientEventReg == NULL) {
+            ReportError("register client event");
+            break;
+        }
+
 		// Socket opened successfully, so transfer ownership to EchoServer_ServerState object.
 		serverState->clientFd = localFd;
 		localFd = -1;
 
-		LaunchRead();
+		LaunchRead(serverState);
 	} while (0);
 
 	close(localFd);
 }
 
-static void LaunchRead(void)
+static void LaunchRead(webServer_ServerState *serverState)
 {
 	serverState->inLineSize = 0;
-	if(serverState->clientFDReg!=NULL) {
-		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
-		serverState->clientFDReg=NULL;
-	}
-	serverState->clientFDReg= EventLoop_RegisterIo(serverState->el, serverState->clientFd, EventLoop_Input,HandleClientReadEvent, NULL);
+    EventLoop_ModifyIoEvents(serverState->eventLoop, serverState->clientEventReg, EventLoop_Input);
 }
 
-static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
+static void HandleClientEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
 {
-	if(serverState->clientFDReg!=NULL) {
-		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
-		serverState->clientFDReg=NULL;
-	}
+    webServer_ServerState *serverState = context;
+
+    if (events & EventLoop_Input) {
+        HandleClientReadEvent(serverState);
+    }
+
+    if (events & EventLoop_Output) {
+        HandleClientWriteEvent(serverState);
+    }
+}
+
+static void HandleClientReadEvent(webServer_ServerState *serverState)
+{
+    EventLoop_ModifyIoEvents(serverState->eventLoop, serverState->clientEventReg, EventLoop_None);
 
 	// Continue until no immediately available input or until an error occurs.
 	size_t maxChars = sizeof(serverState->input) - 1;
@@ -334,17 +325,20 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 		else if (bytesReadOneSysCall == 0)
 		{
 			LogWebDebug("INFO: TCP server: Client has closed connection, reset serverstate.\n");
-			webServer_Restart();
+			RestartServer(EchoServer_StopReason_ClientClosed);
 
 			// StopServer(serverState, EchoServer_StopReason_ClientClosed);
 			break;
 		}
 
+		// If receive buffer is empty then wait for EventLoop_Input event.
 		else if (bytesReadOneSysCall == -1 && errno == EAGAIN)
 		{
 			unsigned int isComplete = true;
 			size_t PayloadSize;
 
+			EventLoop_ModifyIoEvents(serverState->eventLoop, serverState->clientEventReg,
+                                     EventLoop_Input);
 #if !defined(ENABLE_BASE64_ENCODE)
 			if((int)strcmp(serverState->httpMethod,"POST") == 0)
 			{
@@ -352,6 +346,7 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 				{
 					// Uncomment to CHECK: Received Size Vs ContentLength?
 					// LogWebDebug("ERROR: Received Size Mismatched: %d, with Actual Size %d\n",serverState->inLineSize, serverState->contentLength);
+					// Allow to continue to receive till all Content Length in input buffer
 					isComplete = false;
 				}
 				else 
@@ -389,7 +384,7 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 					else
 					{
 						LogWebDebug("ERROR: Decoding fail with error code");
-						webServer_Restart();
+						RestartServer(EchoServer_StopReason_Error);
 						break;
 					}
 				}
@@ -401,10 +396,11 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 				LogWebDebug("Method: %s   URI: %s   Payload: %d bytes\n", serverState->httpMethod, serverState->post, PayloadSize);
 				// Launch send after received hearder
 				if (serverState->isHttp == 1)
-					LaunchWrite();
-				else{
+					LaunchWrite(serverState);
+				else
+				{
 					LogWebDebug("Unknown http method, skip...\n");
-					webServer_Restart();
+					RestartServer(EchoServer_StopReason_Error);
 				}
 					
 				break;
@@ -416,8 +412,7 @@ static void HandleClientReadEvent(EventLoop *el, int fd, EventLoop_IoEvents even
 		{
 			ReportError("recv");
 			LogWebDebug("TCP receive error, reset serverstate.\n");
-			webServer_Restart();
-
+			RestartServer(EchoServer_StopReason_Error);
 			//  StopServer(serverState, EchoServer_StopReason_Error);
 			break;
 		}
@@ -498,22 +493,25 @@ char *str_replace(char *body, size_t *bodylen, ...)
 /// </summary>
 
 
-static void LaunchWrite(void)
+//cw_dbg static void LaunchWrite(void)
+static void LaunchWrite(webServer_ServerState *serverState)
 {
-	if((int)strcmp(serverState->httpMethod,"GET") == 0) LaunchWriteGET();
-	else if((int)strcmp(serverState->httpMethod,"POST") == 0) LaunchWritePOST();
-	else{
+	if((int)strcmp(serverState->httpMethod,"GET") == 0)
+	{
+		LaunchWriteGET(serverState);
+	}
+	else if((int)strcmp(serverState->httpMethod,"POST") == 0)
+	{
+		LaunchWritePOST(serverState);
+	}
+	else
+	{
 		return;
 	}
-	
-	if(serverState->clientFDReg!=NULL) {
-		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
-		serverState->clientFDReg=NULL;
-	}
-	serverState->clientFDReg= EventLoop_RegisterIo(serverState->el, serverState->clientFd, EventLoop_Output,HandleClientWriteEvent, NULL);
+	EventLoop_ModifyIoEvents(serverState->eventLoop, serverState->clientEventReg, EventLoop_Output);
 }
 
-static void LaunchWritePOST(void)
+static void LaunchWritePOST(webServer_ServerState *serverState)
 {
 	char *header;
 	if ((int)strcmp(serverState->post,"/uploadlog") == 0)
@@ -557,9 +555,8 @@ static const char *CloudResultToString(Cloud_Result result)
     return "Unknown Cloud_Result";
 }
 
-static void LaunchWriteGET(void)
+static void LaunchWriteGET(webServer_ServerState *serverState)
 {
-
 	size_t begin = 0;
 	size_t end = 0;
 	while (serverState->post[++end] != '\0' && serverState->post[end] != '?'){}
@@ -798,6 +795,11 @@ static void LaunchWriteGET(void)
 	if (nofile)
 	{
 		code = 404;
+		struct in_addr TcpServerIpAddr;
+		uint16_t TcpServerPort;
+		
+		GetTcpServerIPInfo(&TcpServerIpAddr, &TcpServerPort);
+
 		result = asprintf(&body, "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\">\n\
 			<html>\n\
 			<head>\n\
@@ -806,7 +808,7 @@ static void LaunchWriteGET(void)
 			 </head>\n\
 			  <body >\n\
 				<h4>404 Not found</h4></body></html><br>azsphere webInterface",
-						  localServerIpAddress.s_addr, LocalTcpServerPort);
+						  TcpServerIpAddr.s_addr, TcpServerPort);
 
 		bodylen = strlen(body);
 		mimetype = MIME_TEXT;
@@ -815,7 +817,7 @@ static void LaunchWriteGET(void)
 		if (result == -1)
 		{
 			ReportError("asprintf");
-			StopServer(EchoServer_StopReason_Error);
+			StopServer(serverState, EchoServer_StopReason_Error);
 			return;
 		}
 	}
@@ -863,12 +865,19 @@ Connection:close\015\012\
 	serverState->txBytesSent = 0;
 }
 
-static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
+/// <summary>
+///     <para>
+///         Called to launch a new write operation, or to continue an existing
+///         write operation when the client socket receives a write event.
+///     </para>
+///     <param name="serverState">
+///         The server whose client should be sent the message.
+///     </param>
+/// </summary>
+//cw_dbg static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents events, void *context)
+static void HandleClientWriteEvent(webServer_ServerState *serverState)
 {
-	if(serverState->clientFDReg!=NULL) {
-		EventLoop_UnregisterIo(serverState->el, serverState->clientFDReg);
-		serverState->clientFDReg=NULL;
-	}
+    EventLoop_ModifyIoEvents(serverState->eventLoop, serverState->clientEventReg, EventLoop_None);
 
 	// Continue until have written entire response, error occurs, or OS TX buffer is full.
 	while (serverState->txBytesSent < serverState->txPayloadSize)
@@ -884,9 +893,11 @@ static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents eve
 			serverState->txBytesSent += (size_t)bytesSentOneSysCall;
 		}
 
+        // If OS TX buffer is full then wait for next EventLoop_Output.
 		else if (bytesSentOneSysCall < 0 && errno == EAGAIN)
 		{
-			serverState->clientFDReg= EventLoop_RegisterIo(serverState->el, serverState->clientFd, EventLoop_Output,HandleClientWriteEvent, NULL);
+			EventLoop_ModifyIoEvents(serverState->eventLoop, serverState->clientEventReg,
+                                     EventLoop_Output);
 			return;
 		}
 
@@ -896,7 +907,7 @@ static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents eve
 			ReportError("send");
 			// StopServer(serverState, EchoServer_StopReason_Error);
 			LogWebDebug("error in TCP sending, reset serverstate.\n");
-			webServer_Restart();
+			RestartServer(EchoServer_StopReason_Error);
 
 			return;
 		}
@@ -912,10 +923,14 @@ static void HandleClientWriteEvent(EventLoop *el, int fd, EventLoop_IoEvents eve
 	
 	// Restart for next process
 	// LogWebDebug("After http write event, reset serverstate.\n");
-	webServer_Restart();
+#if 0 //cw_dbg
+	webServer_Restart(serverState);
+#else
+	RestartServer(EchoServer_StopReason_ClientClosed);
+#endif
 }
 
-static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType)
+static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType, ExitCode *callerExitCode)
 {
 	int localFd = -1;
 	int retFd = -1;
@@ -927,6 +942,7 @@ static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType)
 		if (localFd < 0)
 		{
 			ReportError("socket");
+            *callerExitCode = ExitCode_OpenIpV4_Socket;			
 			break;
 		}
 
@@ -943,6 +959,7 @@ static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType)
 		if (r != 0)
 		{
 			ReportError("setsockopt/SO_REUSEADDR");
+            *callerExitCode = ExitCode_OpenIpV4_SetSockOpt;			
 			break;
 		}
 
@@ -957,6 +974,7 @@ static int OpenIpV4Socket(in_addr_t ipAddr, uint16_t port, int sockType)
 		if (r != 0)
 		{
 			ReportError("bind");
+            *callerExitCode = ExitCode_OpenIpV4_Bind;			
 			break;
 		}
 
@@ -975,15 +993,20 @@ static void ReportError(const char *desc)
 	LogWebDebug("ERROR: TCP server: \"%s\", errno=%d (%s)\n", desc, errno, strerror(errno));
 }
 
-static void StopServer(webServer_StopReason reason)
+static void StopServer(webServer_ServerState *serverState, webServer_StopReason reason)
 {
 	// Stop listening for incoming connections.
-	if (serverState->listenFd != -1)
-	{
-		EventLoop_UnregisterIo(serverState->el, serverState->listenFDReg);
-	}
+    if (serverState->listenEventReg != NULL) {
+        EventLoop_ModifyIoEvents(serverState->eventLoop, serverState->listenEventReg,
+                                 EventLoop_None);
+    }
 
 	serverState->shutdownCallback(reason);
+}
+
+static void RestartServer(webServer_StopReason reason)
+{
+	ServerRestartHandler(reason);
 }
 
 int LogWebDebug(const char *fmt, ...)

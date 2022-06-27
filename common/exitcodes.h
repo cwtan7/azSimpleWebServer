@@ -56,7 +56,23 @@ typedef enum {
     ExitCode_Init_AzureIoTDoWorkTimer = 30,
     ExitCode_AzureIoTDoWorkTimer_Consume = 31,
 
+    /* _PrivNetServ_ */
     ExitCode_WebServer_Start = 32,
+    ExitCode_StoppedHandler_Stopped = 33,
+    ExitCode_CheckStatus_SetInterfaceState = 34,
+    ExitCode_CheckStatus_GetInterfaceCount = 35,
+    ExitCode_CheckStatus_GetInterfaceConnectionStatus = 36,
+    ExitCode_ConfigureStaticIp_IpConfigApply = 37,
+    ExitCode_StartSntpServer_StartSntp = 38,
+    ExitCode_StartDhcpServer_StartDhcp = 39,
+    ExitCode_TimerHandler_Consume = 40,
+    ExitCode_InitLaunch_EventLoop = 41,
+    ExitCode_InitLaunch_Timer = 42,
+//    ExitCode_Main_EventLoopFail = 42,
+    ExitCode_EchoStart_Listen = 43,
+    ExitCode_OpenIpV4_Socket = 44,
+    ExitCode_OpenIpV4_SetSockOpt = 45,
+    ExitCode_OpenIpV4_Bind = 46,
 
     /* Util Error Code */
     ExitCode_Util_Ptr_Error = 33,

@@ -15,7 +15,8 @@
 
 #include "netinet/in.h"
 
-#include <applibs/eventloop.h>
+#include "eventloop_timer_utilities.h"
+#include "exitcodes.h"
 
 #define MAX_GET_PARAMETER   	16
 
@@ -33,13 +34,7 @@
 #define MIME_DATA 2
 
 
-   // Ethernet / TCP server settings.
-static struct in_addr localServerIpAddress;
-static const uint16_t LocalTcpServerPort = 8080;
-static int serverBacklogSize = 3;
-// WIFI 
-static const char NetworkInterface[] = "wlan0";
-
+// Ethernet / TCP server settings.
 /// <summary>Reason why the TCP server stopped.</summary>
 typedef enum {
     /// <summary>The echo server stopped because the client closed the connection.</summary>
@@ -54,14 +49,17 @@ typedef enum {
 /// <see cref="EchoServer_ShutDown" />. The client should not directly modify member variables.
 /// </summary>
 typedef struct {
-    EventLoop *el;
-    EventRegistration *listenFDReg;
-    EventRegistration *clientFDReg;
+    EventLoop *eventLoop;
     /// <summary>Socket which listens for incoming connections.</summary>
     int listenFd;
+    /// <summary>Invoked when a new connection is received.</summary>
+    EventRegistration *listenEventReg;
     /// <summary>Accept socket. Only one client socket supported at a time.</summary>
     int clientFd;
-
+    /// <summary>
+    ///     Invoked when server receives data from or sends data to the client.
+    /// </summary>
+    EventRegistration *clientEventReg;
     /// <summary>Number of characters received from client.</summary>
     size_t inLineSize;
     /// <summary>Data received from client.</summary>
@@ -85,8 +83,6 @@ typedef struct {
 	size_t isHttp;
 	/// <summary> POST Content
 	char post[256];
-
-
     /// <summary>
     /// <para>Callback to invoke when the server stops processing connections.</para>
     /// <para>When this callback is invoked, the owner should clean up the server with
@@ -97,28 +93,31 @@ typedef struct {
 } webServer_ServerState;
 
 /// <summary>
-/// <para>Open a non-blocking TCP listening socket on the supplied IP address and port.</para>
-/// <param name="el">eventloop.</param>
-/// <param name="ipAddr">IP address to which the listen socket is bound.</param>
-/// <param name="port">TCP port to which the socket is bound.</param>
-/// <param name="backlogSize">Listening socket queue length.</param>
-/// <returns>Server state which is used to manage the server's resources, NULL on failure.
-/// Should be disposed with <see cref="EchoServer_ShutDown" />.</returns>
+///     <para>Open a non-blocking TCP listening socket on the supplied IP address and port.</para>
+///     <param name="eventLoopInstance">Event loop which will invoke IO callbacks.</param>
+///     <param name="ipAddr">IP address to which the listen socket is bound.</param>
+///     <param name="port">TCP port to which the socket is bound.</param>
+///     <param name="backlogSize">Listening socket queue length.</param>
+///     <param name="shutdownCallback">Callback to invoke when server shuts down.</param>
+///     <param name="callerExitCode">
+///         On failure, set to specific failure code. Undefined on success.
+///     </param>
+///     <returns>
+///         Server state which is used to manage the server's resources, NULL on failure.
+///         Should be disposed of with <see cref="EchoServer_ShutDown" />.
+///     </returns>
 /// </summary>
-webServer_ServerState *webServer_Start(EventLoop *el, in_addr_t ipAddr, uint16_t port,
+webServer_ServerState *webServer_Start(EventLoop *eventLoopInstance, in_addr_t ipAddr, uint16_t port,
                                          int backlogSize,
-                                         void (*shutdownCallback)(webServer_StopReason));
+                                         void (*shutdownCallback)(webServer_StopReason),
+                                         ExitCode *callerExitCode);
 
 /// <summary>
 /// <para>Closes any resources which were allocated by the supplied server. This includes
 /// closing listen and accepted sockets, and freeing any heap memory that was allocated.</para>
 /// <param name="serverState">Server state allocated with <see cref="EchoServer_Start" />.</param>
 /// </summary>
-void webServer_ShutDown(void);
-
-webServer_ServerState* serverState;
-void ServerStoppedHandler(webServer_StopReason reason);
-
+void webServer_ShutDown(webServer_ServerState *serverState);
 
 /** @brief : Debug Log can be show on both debug serial and web interface
   * @retval i: receiver status

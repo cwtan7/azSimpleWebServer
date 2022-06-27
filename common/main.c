@@ -10,51 +10,47 @@
 // - log (messages shown in Visual Studio's Device Output window during debugging)
 // - networking (sets up private Ethernet configuration)
 
+#include <ctype.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 
 // applibs_versions.h defines the API struct versions to use for applibs APIs.
 #include "applibs_versions.h"
 
-#include <applibs/log.h>
 #include <applibs/eventloop.h>
 #include <applibs/networking.h>
-#include <applibs/wificonfig.h>
+#include <applibs/log.h>
 
+#include "eventloop_timer_utilities.h"
 #include "exitcodes.h"
-
-#include "mt3620_avnet_dev.h"
-
-#include "web_tcp_server.h"
-
-
-static volatile sig_atomic_t exitCode = ExitCode_Success;
-static void ExitCodeCallbackHandler(ExitCode ec);
-
-
-static void ShutDownServerAndCleanup(void);
-static void MainServerStoppedHandler(webServer_StopReason reason);
-
-// Initialization/Cleanup
+#include "cloud.h"
 #include "options.h"
 #include "connection.h"
-#include "eventloop_timer_utilities.h"
-static EventLoop *eventLoop = NULL;
+#include "privatenetserv.h"
+
+static volatile sig_atomic_t exitCode = ExitCode_Success;
+// Initialization / Cleanup
+static ExitCode InitEventLoop(void);
+static ExitCode InitCloudConnect(EventLoop *eventLoop);
+static void ShutDownServicesAndCleanup(void);
+
+// Interface callbacks
+static void ExitCodeCallbackHandler(ExitCode ec);
 
 // Cloud
-#include "cloud.h"
 static const char *CloudResultToString(Cloud_Result result);
+static void ConnectionChangedCallbackHandler(bool connected);
+
+// Timer / polling
+static EventLoop *eventLoop = NULL;
+
 static bool isConnected = false;
 static const char *serialNumber = "AzSphere-SimpleWebServ-001";
-static void ConnectionChangedCallbackHandler(bool connected);
-static ExitCode InitEventLoopAndConnectCloud(void);
-static void ShutDownServerAndCleanup(void);
 
 
 /// <summary>
@@ -76,7 +72,7 @@ static void ExitCodeCallbackHandler(ExitCode ec)
 /// </summary>
 int main(int argc, char *argv[])
 {
-    Log_Debug("INFO: Web setting server application starting.\n");
+    Log_Debug("INFO: Simple Web Server - Starting.\n");
     //check network
     bool isNetworkingReady = false;
     if ((Networking_IsNetworkingReady(&isNetworkingReady) == -1) || !isNetworkingReady)
@@ -89,36 +85,39 @@ int main(int argc, char *argv[])
         return exitCode;
     }
 
-    exitCode = InitEventLoopAndConnectCloud();
-    if (exitCode != ExitCode_Success)
+    if ((exitCode = InitEventLoop()) != ExitCode_Success) 
     {
         return exitCode;
     }
 
-    
-    serverState = webServer_Start(eventLoop, localServerIpAddress.s_addr, LocalTcpServerPort,
-                                  serverBacklogSize, MainServerStoppedHandler);
-    if (serverState == NULL)
+    Log_Debug("INFO: Private TCP server application starting.\n");
+    if ((exitCode = InitializeAndLaunchServers(eventLoop)) != ExitCode_Success)
     {
-        exitCode = ExitCode_WebServer_Start;
         return exitCode;
     }
     
-    while (exitCode == ExitCode_Success) {
+    if ((exitCode = InitCloudConnect(eventLoop)) != ExitCode_Success)
+    {
+        return exitCode;        
+    }
+
+	// Main Loop
+    while (exitCode == ExitCode_Success)
+    {
         EventLoop_Run_Result result = EventLoop_Run(eventLoop, -1, true);
         // Continue if interrupted by signal, e.g. due to breakpoint being set.
-        if (result == EventLoop_Run_Failed && errno != EINTR) {
+        if (result == EventLoop_Run_Failed && errno != EINTR)
+        {
             exitCode = ExitCode_Main_EventLoopFail;
         }
     }
 
-    ShutDownServerAndCleanup();
+    ShutDownServicesAndCleanup();
     Log_Debug("INFO: Application exiting.\n");
     return exitCode;
 }
 
-
-static ExitCode InitEventLoopAndConnectCloud(void)
+static ExitCode InitEventLoop(void)
 {
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
@@ -126,19 +125,23 @@ static ExitCode InitEventLoopAndConnectCloud(void)
     sigaction(SIGTERM, &action, NULL);
 
     eventLoop = EventLoop_Create();
-    if (eventLoop == NULL) {
+    if (eventLoop == NULL) 
+    {
         Log_Debug("Could not create event loop.\n");
         return ExitCode_Init_EventLoop;
     }
 
+    return ExitCode_Success;
+}
+
+static ExitCode InitCloudConnect(EventLoop *eventLoop)
+{
     void *connectionContext = Options_GetConnectionContext();
 
     return Cloud_Initialize(eventLoop, connectionContext, ExitCodeCallbackHandler,
                             NULL,
                             NULL, ConnectionChangedCallbackHandler);
 }
-
-
 
 static const char *CloudResultToString(Cloud_Result result)
 {
@@ -167,19 +170,12 @@ static void ConnectionChangedCallbackHandler(bool connected)
     }
 }
 
-static void ShutDownServerAndCleanup(void)
+static void ShutDownServicesAndCleanup(void)
 {
-    webServer_ShutDown();
+    ShutDownServerAndCleanup();
     Cloud_Cleanup();
     EventLoop_Close(eventLoop);
 }
-
-
-
-static void MainServerStoppedHandler(webServer_StopReason reason) {
-	ServerStoppedHandler(reason);
-}
-
 
 
 
