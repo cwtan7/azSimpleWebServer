@@ -29,3 +29,10 @@ webServer_ServerState *GetServerState(void);
 ///     Get Ethernet / TCP server information / attributes.
 /// <summary>
 void GetTcpServerIPInfo(struct in_addr *TcpServerIpAddr, uint16_t *TcpServerPort);
+
+void SetNetworkInterface(char *network_inf_type);
+void SetIPMode(char *ip_mode);
+void SetIPAddress(char *ip_addr);
+void SetIPSubnetMask(char *ip_subnetmask);
+void SetGwAddress(char *gw_ipaddr);
+void SetIPServerPort(char *server_port);

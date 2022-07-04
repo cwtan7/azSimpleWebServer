@@ -59,6 +59,8 @@ static const char dpsUrl[] = "global.azure-devices-provisioning.net";
 static EventLoopTimer *provisioningTimer = NULL;
 static EventLoopTimer *timeoutTimer = NULL;
 
+static Connection_Dps_Config dps_config = {.scopeId = NULL};
+
 MU_DEFINE_ENUM_STRINGS_WITHOUT_INVALID(PROV_DEVICE_RESULT, PROV_DEVICE_RESULT_VALUE);
 MU_DEFINE_ENUM_STRINGS_WITHOUT_INVALID(IOTHUB_CLIENT_RESULT, IOTHUB_CLIENT_RESULT_VALUE);
 
@@ -384,3 +386,19 @@ cleanup:
 }
 
 void Connection_Cleanup(void) {}
+
+void *Connection_GetConnectionContext(void)
+{
+    return (void *)&dps_config;
+}
+
+void Connection_SetDPSScopeId(char *scopeId)
+{
+    dps_config.scopeId = scopeId;
+}
+
+const char *Connection_GetDPSScopeId(void)
+{
+    return dps_config.scopeId;
+}
+

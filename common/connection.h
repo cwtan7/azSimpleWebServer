@@ -68,3 +68,25 @@ void Connection_Start(void);
 /// Close and cleanup any resources needed by the Azure IoT Hub connection.
 /// </summary>
 void Connection_Cleanup(void);
+
+/// <summary>
+/// Get the connection context or any resources needed by the Azure IoT Hub connection.
+/// </summary>
+void *Connection_GetConnectionContext(void);
+
+/// <summary>
+/// Set the connection context any resources needed by the Azure IoT Hub connection.
+/// </summary>
+void Connection_SetConnectionContext(char *connection_string);
+
+/// <summary>
+/// Set the DPS Scope ID needed by the Azure IoT Hub connection.
+/// </summary>
+void Connection_SetDPSScopeId(char *scopeId);
+
+/// <summary>
+/// Get the DPS Scope ID needed by the Azure IoT Hub connection.
+/// </summary>
+const char *Connection_GetDPSScopeId(void);
+
+//cw_dbg NOTE: this connection.h should reside in DPS or the connection folder or use #include connection type which select by compiler flag

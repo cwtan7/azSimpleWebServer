@@ -23,6 +23,7 @@ target_sources(${PROJECT_NAME}
     ${CMAKE_CURRENT_LIST_DIR}/privatenetserv.c
     ${CMAKE_CURRENT_LIST_DIR}/privatenetserv.h
     ${CMAKE_CURRENT_LIST_DIR}/main.c
+    ${CMAKE_CURRENT_LIST_DIR}/options_args_parser.c
     ${CMAKE_CURRENT_LIST_DIR}/options.h
     ${CMAKE_CURRENT_LIST_DIR}/parson.c
     ${CMAKE_CURRENT_LIST_DIR}/parson.h

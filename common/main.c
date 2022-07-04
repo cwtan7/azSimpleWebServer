@@ -136,7 +136,7 @@ static ExitCode InitEventLoop(void)
 
 static ExitCode InitCloudConnect(EventLoop *eventLoop)
 {
-    void *connectionContext = Options_GetConnectionContext();
+    void *connectionContext = Connection_GetConnectionContext();
 
     return Cloud_Initialize(eventLoop, connectionContext, ExitCodeCallbackHandler,
                             NULL,

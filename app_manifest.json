@@ -6,18 +6,23 @@
   "CmdArgs": [ 
     "--Hostname", "iothub-url",
     "--ConnectionType", "DPS",
-    "--ScopeID", "dps-scope-id"
+    "--ScopeID", "<scope_id>",
+    "--NetworkIF", "<net_if_type>",
+    "--IPMode", "<ip_mode>",
+    "--IPPort", "<ip_port>",
+    "--IPAddr", "<ip_static_address>",
+    "--IPSubnetMask", "<ip_subnet_mask>",
+    "--IPGwAddr", "<ip_gw_address>"
   ],
   "Capabilities": {
     "AllowedConnections": [
       "global.azure-devices-provisioning.net",
-      "iothub-url"
+      "<iothub_url>"
     ],
     "MutableStorage": { "SizeKB": 48 },
-    "AllowedTcpServerPorts": [ 8080 ],
-    "DeviceAuthentication": "azsphere-tenant-id",
-    "NetworkConfig": true,
-    "WifiConfig": true
+    "AllowedTcpServerPorts": [ <ip_port> ],
+    "DeviceAuthentication": "<azsphere_tenant_id>",
+    "NetworkConfig": true
   },
   "ApplicationType": "Default"
 }
